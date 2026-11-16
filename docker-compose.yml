@@ -1,0 +1,18 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      WIKIPULSE_SOURCE: ${WIKIPULSE_SOURCE:-live}
+      REPLAY_SPEED: ${REPLAY_SPEED:-1.0}
+      INCLUDE_BOTS: ${INCLUDE_BOTS:-false}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
