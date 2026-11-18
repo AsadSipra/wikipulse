@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -217,3 +219,27 @@ async def test_page_title_is_sent_as_untrusted_data():
 def test_evidence_must_appear_in_the_diff(evidence, expected):
     diff = "- Lahore is the capital of Punjab.\n+ LAHORE IS & BEST LOL"
     assert evidence_in_diff(evidence, diff) is expected
+
+
+async def test_no_reviews_are_paid_for_while_nobody_is_watching():
+    viewers = [False]
+    llm = FakeLLM(YES)
+    svc = service(llm, has_viewers=lambda: viewers[0])
+    svc.consider(make_edit(**BLANKING))
+    assert svc.queue.qsize() == 0 and svc.stats["skipped_no_viewers"] == 1
+
+    viewers[0] = True
+    svc.consider(make_edit(id=2, **BLANKING))
+    assert svc.queue.qsize() == 1
+
+
+async def test_queued_review_is_skipped_if_the_last_viewer_leaves():
+    viewers = [True]
+    llm = FakeLLM(YES)
+    svc = service(llm, has_viewers=lambda: viewers[0])
+    svc.consider(make_edit(**BLANKING))
+    viewers[0] = False
+    worker = asyncio.create_task(svc.run())
+    await asyncio.wait_for(svc.queue.join(), timeout=2)
+    worker.cancel()
+    assert llm.prompts == [] and svc.stats["skipped_no_viewers"] == 1

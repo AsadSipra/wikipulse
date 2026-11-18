@@ -47,7 +47,9 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
     llm = build_llm(cfg) if llm == "auto" else llm
     vandalism_llm = Budgeted(llm, cfg.vandalism_calls_per_minute, "vandalism") if llm else None
     pulse_llm = Budgeted(llm, cfg.pulse_calls_per_minute, "pulse") if llm else None
-    vandalism = VandalismService(vandalism_llm, fetch_diffs=cfg.fetch_diffs)
+    # AI spend follows viewers, not uptime: with no dashboard connected, Pulse
+    # and vandalism review pause. Ingestion and stats keep running (they're free).
+    vandalism = VandalismService(vandalism_llm, fetch_diffs=cfg.fetch_diffs, has_viewers=lambda: bool(hub.clients))
     pipeline = Pipeline(
         source or build_source(cfg), stats, hub, vandalism=vandalism, wikipedia_only=cfg.wikipedia_only
     )
@@ -93,6 +95,7 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
             "uptime_seconds": round(time.time() - pipeline.started_at),
             "ai": {
                 "enabled": llm is not None,
+                "paused_no_viewers": llm is not None and not hub.clients,
                 "model": getattr(llm, "model", None),
                 "llm_calls": getattr(llm, "calls", 0),
                 "llm_failures": getattr(llm, "failures", 0),

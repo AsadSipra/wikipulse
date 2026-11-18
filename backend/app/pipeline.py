@@ -59,8 +59,14 @@ class Pipeline:
         self.failure: BaseException | None = None
         self.last_event_at: float | None = None
 
+    def has_viewers(self) -> bool:
+        """True while at least one dashboard is connected. AI work pauses otherwise."""
+        return bool(self.hub.clients)
+
     def attach_pulse(self, llm: LLM | None, interval_seconds: float) -> PulseService:
-        self.pulse = PulseService(self.stats, comments_index(self.comment_log), llm, interval_seconds)
+        self.pulse = PulseService(
+            self.stats, comments_index(self.comment_log), llm, interval_seconds, has_viewers=self.has_viewers
+        )
         return self.pulse
 
     async def run(self) -> None:

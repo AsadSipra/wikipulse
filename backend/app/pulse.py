@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -23,6 +24,7 @@ from .stats import RollingStats
 
 log = logging.getLogger(__name__)
 
+IDLE_POLL_SECONDS = 5.0  # how often to check for viewers while paused
 STALE_AFTER = 180.0  # seconds an AI summary may be kept when a refresh fails
 MAX_AGE = 300.0  # refresh at least this often, even if the leading pages haven't changed
 
@@ -62,17 +64,25 @@ class PulseService:
         recent_comments: Any,  # callable: (wiki, title) -> list[str]
         llm: LLM | None,
         interval_seconds: float = 60.0,
+        has_viewers: Callable[[], bool] = lambda: True,
     ) -> None:
         self.stats = stats
         self.recent_comments = recent_comments
         self.llm = llm
         self.interval_seconds = interval_seconds
+        self.has_viewers = has_viewers
         self.latest: Pulse | None = None
         self._last_key: tuple[Any, ...] | None = None
 
     async def run(self) -> None:
         await asyncio.sleep(min(15.0, self.interval_seconds))  # let the window fill a little first
         while True:
+            # A summary nobody is looking at is wasted spend, so the loop idles
+            # while no dashboard is connected and refreshes within a few
+            # seconds of someone opening it.
+            if not self.has_viewers():
+                await asyncio.sleep(min(IDLE_POLL_SECONDS, self.interval_seconds))
+                continue
             try:
                 await self.refresh()
             except Exception:  # the loop must survive anything

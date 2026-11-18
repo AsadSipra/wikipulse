@@ -69,7 +69,7 @@ export type ServerMessage =
 
 export type ClientMessage = { type: 'subscribe'; wiki: string | null }
 
-export type ConnectionStatus = 'connecting' | 'open' | 'closed'
+export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'paused'
 
 /** Event ids are only unique within one wiki, so identity is wiki + id. */
 export const editKey = (wiki: string, id: number): string => `${wiki}:${id}`

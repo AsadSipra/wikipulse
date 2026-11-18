@@ -71,6 +71,7 @@ export default function App() {
 }
 
 function connectionLabel(status: ConnectionStatus, stats: Stats | null): { text: string; tone: string } {
+  if (status === 'paused') return { text: 'Paused while the tab was hidden', tone: 'down' }
   if (status === 'connecting' && !stats) return { text: 'Connecting…', tone: 'down' }
   if (status !== 'open') return { text: 'Reconnecting…', tone: 'down' }
   if (!stats) return { text: 'Loading…', tone: 'down' }

@@ -1,3 +1,4 @@
+import asyncio
 from collections import deque
 
 from app.llm import LLMError
@@ -93,3 +94,21 @@ async def test_recent_ai_summary_survives_one_failed_refresh():
     stats.record(make_edit(title="Karachi"))  # top pages change, so a new call is attempted
     assert await svc.refresh() is first
     assert len(llm.prompts) == 2
+
+
+async def test_pulse_loop_idles_without_viewers_and_resumes_when_one_arrives():
+    viewers = [False]
+    llm = FakeLLM({"headline": "h", "summary": "s"})
+    svc = PulseService(stats_with("Lahore"), comments_index(deque()), llm, interval_seconds=0.01,
+                       has_viewers=lambda: viewers[0])
+    loop = asyncio.create_task(svc.run())
+    await asyncio.sleep(0.1)
+    assert llm.prompts == [] and svc.latest is None  # nobody watching: no call
+
+    viewers[0] = True
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if svc.latest:
+            break
+    loop.cancel()
+    assert svc.latest is not None and svc.latest.source == "llm"

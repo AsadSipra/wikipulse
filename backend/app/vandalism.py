@@ -27,6 +27,7 @@ import logging
 import re
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -131,8 +132,10 @@ class VandalismService:
         workers: int = 2,
         min_confidence: float = 0.6,
         transport: httpx.AsyncBaseTransport | None = None,
+        has_viewers: Callable[[], bool] = lambda: True,
     ) -> None:
         self.llm = llm
+        self.has_viewers = has_viewers
         self.fetch_diffs = fetch_diffs
         self.workers = workers
         self.min_confidence = min_confidence
@@ -142,7 +145,7 @@ class VandalismService:
         self._http = httpx.AsyncClient(timeout=4.0, headers={"User-Agent": USER_AGENT}, transport=transport)
         self.stats = {
             "candidates": 0, "dropped": 0, "reviewed": 0, "flagged": 0,
-            "no_diff": 0, "no_change": 0, "rejected_unsupported": 0,
+            "no_diff": 0, "no_change": 0, "rejected_unsupported": 0, "skipped_no_viewers": 0,
         }
 
     # -- stage 1 ---------------------------------------------------------
@@ -153,6 +156,10 @@ class VandalismService:
         if self.llm is None:
             if score >= RULES_ONLY_SCORE:
                 self._publish(edit, min(1.0, score / 6), _rules_reason(reasons), "rules")
+            return
+        if not self.has_viewers():
+            # Nobody would see the flag, so don't pay for a review.
+            self.stats["skipped_no_viewers"] += 1
             return
         self.stats["candidates"] += 1
         try:
@@ -168,7 +175,10 @@ class VandalismService:
         while True:
             edit, reasons = await self.queue.get()
             try:
-                await self.review(edit, reasons)
+                if self.has_viewers():
+                    await self.review(edit, reasons)
+                else:  # the last viewer left while this edit was queued
+                    self.stats["skipped_no_viewers"] += 1
             except Exception:
                 log.exception("vandalism review failed")
             finally:

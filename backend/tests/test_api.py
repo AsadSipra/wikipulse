@@ -166,3 +166,12 @@ def test_malformed_subscribe_message_does_not_drop_the_client():
             if msg["type"] == "init":
                 break
         assert msg["type"] == "init" and msg["stats"]["wiki"] == "dewiki"
+
+
+def test_ai_reports_paused_with_no_viewers_and_resumes_with_one():
+    app, client = make_client(FakeLLM(*[{"headline": "h", "summary": "s"}] * 5))
+    with client:
+        assert client.get("/health").json()["ai"]["paused_no_viewers"] is True
+        with client.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            assert client.get("/health").json()["ai"]["paused_no_viewers"] is False
