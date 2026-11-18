@@ -18,10 +18,10 @@ class FakeClock:
         self.now += seconds
 
 
-def edit(title: str = "Lahore", wiki: str = "enwiki", bot: bool = False) -> Edit:
+def edit(title: str = "Lahore", wiki: str = "enwiki", bot: bool = False, namespace: int = 0) -> Edit:
     return Edit(
         id=1, wiki=wiki, server_name="x", title=title, user="u", bot=bot, anonymous=False,
-        type="edit", namespace=0, comment="", minor=False, timestamp=0,
+        type="edit", namespace=namespace, comment="", minor=False, timestamp=0,
         length_old=1, length_new=2, revision_old=1, revision_new=2,
     )
 
@@ -123,3 +123,12 @@ def test_quiet_periods_do_not_break_expiry():
     assert stats.edits_per_minute() == 0
     stats.record(edit())
     assert stats.edits_per_minute() == 1
+
+
+def test_only_articles_can_trend_but_every_edit_counts_towards_the_rate():
+    stats, _ = make()
+    stats.record(edit("User:Someone/sandbox", namespace=2))
+    stats.record(edit("Wikipedia:Administrators' noticeboard", namespace=4))
+    stats.record(edit("Lahore"))
+    assert stats.edits_per_minute() == 3
+    assert stats.top_pages() == [(("enwiki", "Lahore"), 1)]

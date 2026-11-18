@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, ValidationError
 
@@ -37,12 +38,20 @@ class Edit(BaseModel):
     revision_new: int | None
 
     @property
-    def byte_delta(self) -> int:
-        return (self.length_new or 0) - (self.length_old or 0)
+    def byte_delta(self) -> int | None:
+        """Size change in bytes, or None when the stream didn't report it.
+
+        Unknown is not zero: treating a missing size as 0 would make an
+        ordinary edit look like page blanking."""
+        if self.length_new is None:
+            return None
+        if self.length_old is None:
+            return self.length_new if self.type == "new" else None
+        return self.length_new - self.length_old
 
     @property
     def page_url(self) -> str:
-        return f"https://{self.server_name}/wiki/{self.title.replace(' ', '_')}"
+        return page_url(self.server_name, self.title)
 
     @property
     def diff_url(self) -> str | None:
@@ -72,6 +81,22 @@ class Edit(BaseModel):
         }
 
 
+def page_url(server_name: str, title: str) -> str:
+    """Article URL. Titles may contain ?, # or %, which must be escaped or the
+    browser treats them as a query string or fragment."""
+    path = quote(title.replace(" ", "_"), safe="/:@!$()*,;'~")
+    return f"https://{server_name}/wiki/{path}"
+
+
+def is_wikipedia(server_name: str) -> bool:
+    """True for Wikipedia language editions (en.wikipedia.org, ur.wikipedia.org, ...).
+
+    Excludes sister projects. Wikidata alone is a large share of the stream,
+    mostly bulk edits from tools like QuickStatements that aren't flagged as
+    bots, and its items (Q141401630) mean nothing to a news reader."""
+    return server_name.endswith(".wikipedia.org")
+
+
 def is_anonymous(user: str) -> bool:
     """IP editors, plus temporary accounts (Wikimedia names these `~YYYY-...`)."""
     if user.startswith("~"):
@@ -83,38 +108,57 @@ def is_anonymous(user: str) -> bool:
     return True
 
 
-def parse_event(raw: dict[str, Any]) -> Edit | None:
-    """Turn a raw stream event into an Edit, or None if we don't track it.
+def parse_event(raw: Any) -> Edit | None:
+    """Turn a raw stream event into an Edit, or None if we don't track it or
+    the event is malformed.
 
-    Never raises: one malformed event must not take down the pipeline.
+    Every field is shape-checked before use, so one bad event is skipped
+    instead of stopping ingestion. Booleans must be real booleans: a string
+    like "false" is not silently read as True.
     """
-    if raw.get("type") not in TRACKED_TYPES:
+    if not isinstance(raw, dict) or raw.get("type") not in TRACKED_TYPES:
         return None
+    meta = raw.get("meta")
     # Wikimedia sends synthetic "canary" events to check the stream is alive.
-    if raw.get("meta", {}).get("domain") == "canary":
+    if isinstance(meta, dict) and meta.get("domain") == "canary":
         return None
 
-    length = raw.get("length") or {}
-    revision = raw.get("revision") or {}
-    user = raw.get("user") or ""
-    try:
-        return Edit(
-            id=raw["id"],
-            wiki=raw["wiki"],
-            server_name=raw["server_name"],
-            title=raw["title"],
-            user=user,
-            bot=bool(raw.get("bot", False)),
-            anonymous=is_anonymous(user),
-            type=raw["type"],
-            namespace=raw.get("namespace", 0),
-            comment=raw.get("comment") or "",
-            minor=bool(raw.get("minor", False)),
-            timestamp=raw["timestamp"],
-            length_old=length.get("old"),
-            length_new=length.get("new"),
-            revision_old=revision.get("old"),
-            revision_new=revision.get("new"),
-        )
-    except (KeyError, TypeError, ValidationError):
+    length = _dict_or_empty(raw.get("length"))
+    revision = _dict_or_empty(raw.get("revision"))
+    user = raw.get("user")
+    comment = raw.get("comment")
+    if length is None or revision is None or not isinstance(user, str):
         return None
+    if comment is not None and not isinstance(comment, str):
+        return None
+    try:
+        return Edit.model_validate(
+            {
+                "id": raw.get("id"),
+                "wiki": raw.get("wiki"),
+                "server_name": raw.get("server_name"),
+                "title": raw.get("title"),
+                "user": user,
+                "bot": raw.get("bot", False),
+                "anonymous": is_anonymous(user),
+                "type": raw["type"],
+                "namespace": raw.get("namespace", 0),
+                "comment": comment or "",
+                "minor": raw.get("minor", False),
+                "timestamp": raw.get("timestamp"),
+                "length_old": length.get("old"),
+                "length_new": length.get("new"),
+                "revision_old": revision.get("old"),
+                "revision_new": revision.get("new"),
+            },
+            strict=True,  # no "false" -> True, no "12" -> 12
+        )
+    except ValidationError:
+        return None
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any] | None:
+    """Optional nested object: missing/null becomes {}, any other non-object is malformed."""
+    if value is None:
+        return {}
+    return value if isinstance(value, dict) else None

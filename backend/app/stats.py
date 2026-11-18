@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from .models import Edit
 
 PageKey = tuple[str, str]  # (wiki, title): the same title on two wikis is two pages
+ARTICLE_NAMESPACE = 0
 
 
 @dataclass
@@ -56,12 +57,15 @@ class RollingStats:
         if not self._buckets or self._buckets[-1].second != now:
             self._buckets.append(_Bucket(second=now))
         bucket = self._buckets[-1]
-        key = (edit.wiki, edit.title)
-        bucket.pages[key] += 1
         bucket.wikis[edit.wiki] += 1
         bucket.total += 1
-        self._page_totals[key] += 1
         self._wiki_totals[edit.wiki] += 1
+        # Every edit counts towards the rate, but only articles (namespace 0)
+        # can trend: user pages, sandboxes and noticeboards are noise to a reader.
+        if edit.namespace == ARTICLE_NAMESPACE:
+            key = (edit.wiki, edit.title)
+            bucket.pages[key] += 1
+            self._page_totals[key] += 1
 
     def _expire(self, now: int) -> None:
         cutoff = now - self.window_seconds

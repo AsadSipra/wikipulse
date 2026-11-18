@@ -41,6 +41,8 @@ class LiveSource:
     exponential with jitter, capped, and resets after a healthy connection.
     """
 
+    kind = "live"
+
     def __init__(self, url: str = STREAM_URL, max_backoff: float = 30.0) -> None:
         self.url = url
         self.max_backoff = max_backoff
@@ -113,6 +115,8 @@ class ReplaySource:
     indefinitely.
     """
 
+    kind = "replay"
+
     def __init__(self, path: str | Path, speed: float = 1.0, loop: bool = True) -> None:
         self.path = Path(path)
         self.speed = speed
@@ -122,6 +126,7 @@ class ReplaySource:
     async def events(self) -> AsyncIterator[dict[str, Any]]:
         while True:
             prev_ts: float | None = None
+            yielded = 0
             with self.path.open() as fh:
                 for line in fh:
                     line = line.strip()
@@ -130,6 +135,8 @@ class ReplaySource:
                     try:
                         event = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict):
                         continue
                     ts = event.get("timestamp")
                     if isinstance(ts, (int, float)) and prev_ts is not None and self.speed > 0:
@@ -140,6 +147,12 @@ class ReplaySource:
                         await asyncio.sleep(0)  # stay cooperative on fast replays
                     if isinstance(ts, (int, float)):
                         prev_ts = ts
+                    yielded += 1
                     yield event
+            if yielded == 0:
+                # Looping over a file with no events would spin forever without
+                # ever yielding to the event loop; fail clearly instead.
+                raise RuntimeError(f"replay file has no events: {self.path}")
             if not self.loop:
+                self.connected = False  # the recording has ended
                 return
