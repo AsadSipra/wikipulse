@@ -27,12 +27,17 @@ export function useWikiPulse() {
       const ws = new WebSocket(socketUrl())
       wsRef.current = ws
 
+      // `disposed` guards every handler, so a socket from an unmounted
+      // component (React StrictMode mounts twice in development) can never
+      // update the page or schedule a reconnect.
       ws.onopen = () => {
+        if (disposed) return
         backoff = 1000
         dispatch({ kind: 'status', status: 'open' })
         if (wikiRef.current) send(ws, { type: 'subscribe', wiki: wikiRef.current })
       }
       ws.onmessage = (event) => {
+        if (disposed) return
         try {
           dispatch({ kind: 'message', message: JSON.parse(event.data) as ServerMessage })
         } catch {
@@ -51,7 +56,16 @@ export function useWikiPulse() {
     return () => {
       disposed = true
       window.clearTimeout(timer)
-      wsRef.current?.close()
+      const ws = wsRef.current
+      if (!ws) return
+      if (ws.readyState === WebSocket.CONNECTING) {
+        // Closing mid-handshake aborts the connection while the server is
+        // already sending its first message, which the dev proxy reports as
+        // an EPIPE error. Let it open, then close it cleanly.
+        ws.addEventListener('open', () => ws.close(), { once: true })
+      } else {
+        ws.close()
+      }
     }
   }, [])
 

@@ -7,6 +7,7 @@
   --accent: #4f9cf7;
   --pos: #3fb87f;
   --neg: #e5534b;
+  --warn: #e3a33b;
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -30,9 +31,11 @@ h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacin
 .filter { margin-left: auto; display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
 select { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 
-main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
-.feed-card { grid-column: 1 / -1; }
+.pulse-card { grid-column: 1 / -1; }
+.feed-card { grid-column: 1 / 2; }
+.flags-card { grid-column: 2 / 3; }
 
 .big { font-size: 40px; font-weight: 700; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
@@ -52,20 +55,41 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-left: 6px; white-space: nowrap; }
 
 .feed { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; font-size: 13px; }
-.feed li { display: grid; grid-template-columns: 64px 110px minmax(0, 1fr) 64px 220px; gap: 10px; align-items: baseline; padding: 6px 4px; border-bottom: 1px solid var(--line); }
-.feed li.is-bot { opacity: .55; }
-.feed time { color: var(--muted); font-variant-numeric: tabular-nums; }
-.feed .tag { margin-left: 0; justify-self: start; }
-.feed .title, .feed .user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feed .user .tag { margin-left: 6px; }
-.feed .comment { color: var(--muted); font-size: 12px; margin-left: 10px; }
-.delta { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.feed li { padding: 7px 4px; border-bottom: 1px solid var(--line); }
+.feed li.is-bot { opacity: .6; }
+.feed-line { display: flex; align-items: baseline; gap: 8px; }
+.feed-line .title { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-meta { display: flex; align-items: baseline; gap: 8px; margin-top: 2px; font-size: 12px; color: var(--muted); min-width: 0; }
+.feed-meta .tag { margin-left: 0; }
+.feed time { font-variant-numeric: tabular-nums; }
+.feed .user { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.feed .comment { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delta { flex: none; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 .delta.pos { color: var(--pos); }
 .delta.neg { color: var(--neg); }
 
 @media (max-width: 800px) {
   main { grid-template-columns: 1fr; }
-  .feed li { grid-template-columns: 60px minmax(0, 1fr) 50px; }
-  .feed .tag:first-of-type, .feed .user { display: none; }
+  .feed-card, .flags-card { grid-column: 1 / -1; }
   .feed .comment { display: none; }
 }
+
+.pulse p { margin: 0 0 6px; line-height: 1.5; }
+.pulse-headline { font-size: 18px; font-weight: 600; }
+
+.feed li.is-flagged { background: rgba(229, 83, 75, .08); }
+.flag-icon { color: var(--neg); margin-right: 6px; }
+.confidence.rules { color: var(--muted); }
+
+.flags { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; }
+.flags li { padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.flag-top { display: flex; align-items: baseline; gap: 6px; }
+.flag-top .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.confidence { margin-left: auto; font-size: 12px; color: var(--warn); font-variant-numeric: tabular-nums; }
+.flag-reason { margin: 4px 0; font-size: 14px; }
+.flag-evidence { margin: 4px 0 6px; padding: 4px 8px; border-left: 2px solid var(--neg); color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.flags .small { margin: 0; }
+
+.status.replay::before { color: var(--warn); }
+.scope-note { font-size: 12px; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.chart-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 4px; }
