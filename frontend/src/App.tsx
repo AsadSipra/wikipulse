@@ -9,7 +9,7 @@ import type { ConnectionStatus, Stats } from './types'
 import { useWikiPulse } from './useWikiPulse'
 
 export default function App() {
-  const { state, selectWiki } = useWikiPulse()
+  const { state, running, start, stop, selectWiki } = useWikiPulse()
   const { stats, feed, flags, status, wiki } = state
   const flagsByEdit = useMemo(() => new Map(flags.map((f) => [editKey(f.wiki, f.edit_id), f])), [flags])
   const connection = connectionLabel(status, stats)
@@ -19,6 +19,9 @@ export default function App() {
       <header>
         <h1>WikiPulse</h1>
         <span className={`status ${connection.tone}`} role="status">{connection.text}</span>
+        <button type="button" className={running ? 'demo-toggle stop' : 'demo-toggle'} onClick={running ? stop : start}>
+          {running ? 'Stop demo' : 'Start demo'}
+        </button>
         <label className="filter">
           Wiki
           <select value={wiki ?? ''} onChange={(e) => selectWiki(e.target.value || null)}>
@@ -31,6 +34,17 @@ export default function App() {
           </select>
         </label>
       </header>
+
+      {!running && !stats && (
+        <section className="card intro">
+          <h2>Live Wikipedia activity, summarised by AI</h2>
+          <p>
+            Start the demo to connect to the Wikipedia edit stream. AI summaries and vandalism checks run only
+            while the demo is on, and stop when you press Stop or close the page.
+          </p>
+          <button type="button" className="demo-toggle" onClick={start}>Start demo</button>
+        </section>
+      )}
 
       <main>
         <section className="card pulse-card">
@@ -71,7 +85,7 @@ export default function App() {
 }
 
 function connectionLabel(status: ConnectionStatus, stats: Stats | null): { text: string; tone: string } {
-  if (status === 'paused') return { text: 'Paused while the tab was hidden', tone: 'down' }
+  if (status === 'stopped') return { text: stats ? 'Demo stopped' : 'Not started', tone: 'idle' }
   if (status === 'connecting' && !stats) return { text: 'Connecting…', tone: 'down' }
   if (status !== 'open') return { text: 'Reconnecting…', tone: 'down' }
   if (!stats) return { text: 'Loading…', tone: 'down' }

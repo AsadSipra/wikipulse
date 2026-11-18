@@ -6,6 +6,10 @@ import { expect, test } from '@playwright/test'
 test('dashboard shows replayed activity and filters by wiki', async ({ page }) => {
   await page.goto('/')
 
+  // Nothing connects (and no AI is used) until the demo is started.
+  await expect(page.getByRole('status')).toHaveText('Not started')
+  await page.getByRole('button', { name: 'Start demo' }).first().click()
+
   // Recorded data is labelled as such, never as "Live".
   await expect(page.getByRole('status')).toHaveText('Replay (recorded data)')
 
@@ -30,4 +34,9 @@ test('dashboard shows replayed activity and filters by wiki', async ({ page }) =
   // And back to everything.
   await page.getByLabel('Wiki').selectOption({ value: '' })
   await expect(page.locator('.top-pages .tag').first()).toBeVisible()
+
+  // Stopping disconnects but keeps the last numbers on screen.
+  await page.getByRole('button', { name: 'Stop demo' }).click()
+  await expect(page.getByRole('status')).toHaveText('Demo stopped')
+  await expect(page.getByRole('button', { name: 'Start demo' })).toBeVisible()
 })

@@ -20,7 +20,7 @@ export type Action =
   | { kind: 'select-wiki'; wiki: string | null }
   | { kind: 'message'; message: ServerMessage }
 
-export const initialState: State = { status: 'connecting', wiki: null, stats: null, feed: [], flags: [] }
+export const initialState: State = { status: 'stopped', wiki: null, stats: null, feed: [], flags: [] }
 
 export function reducer(state: State, action: Action): State {
   switch (action.kind) {

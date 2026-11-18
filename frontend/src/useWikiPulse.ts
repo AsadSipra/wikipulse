@@ -1,12 +1,8 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { initialState, reducer } from './state'
 import type { ClientMessage, ServerMessage } from './types'
 
 const MAX_BACKOFF_MS = 15_000
-// The server only spends on AI while a dashboard is connected, so a tab left
-// in the background lets go of its connection after a while and picks it up
-// again when it's looked at.
-const HIDDEN_PAUSE_MS = 3 * 60_000
 
 function socketUrl(): string {
   const configured = import.meta.env.VITE_WS_URL as string | undefined
@@ -26,19 +22,23 @@ function closeSocket(ws: WebSocket) {
   }
 }
 
-/** Owns the WebSocket: connects, reconnects with backoff, re-subscribes, and
- * pauses while the tab is hidden. */
+/** Owns the WebSocket: connects while the demo is running, reconnects with
+ * backoff, and re-subscribes. The server only spends on AI while a dashboard
+ * is connected, so nothing is called until someone presses Start. */
 export function useWikiPulse() {
   const [state, dispatch] = useReducer(reducer, initialState)
+  const [running, setRunning] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const wikiRef = useRef<string | null>(null) // survives reconnects
 
   useEffect(() => {
+    if (!running) {
+      dispatch({ kind: 'status', status: 'stopped' })
+      return
+    }
     let backoff = 1000
     let reconnectTimer: number | undefined
-    let hiddenTimer: number | undefined
     let disposed = false
-    let paused = false
 
     const connect = () => {
       dispatch({ kind: 'status', status: 'connecting' })
@@ -47,7 +47,7 @@ export function useWikiPulse() {
       // Only the current socket may touch state. That ignores a socket from an
       // unmounted component (React StrictMode mounts twice in development) and
       // one we closed on purpose but whose events arrive late.
-      const current = () => !disposed && !paused && wsRef.current === ws
+      const current = () => !disposed && wsRef.current === ws
 
       ws.onopen = () => {
         if (!current()) return
@@ -71,36 +71,14 @@ export function useWikiPulse() {
       }
     }
 
-    const pause = () => {
-      paused = true
-      window.clearTimeout(reconnectTimer)
-      if (wsRef.current) closeSocket(wsRef.current)
-      dispatch({ kind: 'status', status: 'paused' })
-    }
-
-    const onVisibilityChange = () => {
-      if (document.hidden) {
-        hiddenTimer = window.setTimeout(pause, HIDDEN_PAUSE_MS)
-        return
-      }
-      window.clearTimeout(hiddenTimer)
-      if (paused) {
-        paused = false
-        backoff = 1000
-        connect()
-      }
-    }
-
     connect()
-    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       disposed = true
-      document.removeEventListener('visibilitychange', onVisibilityChange)
       window.clearTimeout(reconnectTimer)
-      window.clearTimeout(hiddenTimer)
       if (wsRef.current) closeSocket(wsRef.current)
+      wsRef.current = null
     }
-  }, [])
+  }, [running])
 
   const selectWiki = useCallback((wiki: string | null) => {
     wikiRef.current = wiki
@@ -109,7 +87,10 @@ export function useWikiPulse() {
     if (ws?.readyState === WebSocket.OPEN) send(ws, { type: 'subscribe', wiki })
   }, [])
 
-  return { state, selectWiki }
+  const start = useCallback(() => setRunning(true), [])
+  const stop = useCallback(() => setRunning(false), [])
+
+  return { state, running, start, stop, selectWiki }
 }
 
 function send(ws: WebSocket, message: ClientMessage) {
