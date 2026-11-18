@@ -29,6 +29,36 @@ Tool used: Claude (as a pair-programmer: scaffolding, first drafts, and reviewin
 
 - A headless Chrome screenshot showed the dashboard stuck on "Reconnecting". Rather than change the code, we tested the socket directly (both the backend and the Vite proxy returned `init` messages). The cause was the screenshot tool's virtual-time mode, not the app. Lesson: confirm the bug exists before fixing it.
 
+## 5. Shared LLM rate limit starved the Pulse summary: AI was wrong
+
+- **Asked:** rate-limit LLM calls to protect the API key's spending limit.
+- **Got:** one shared limiter of 20 calls a minute for the whole client.
+- **What went wrong:** running the dashboard against a stand-in model at 3× replay speed, the vandalism reviews used the whole budget, and the Pulse card fell back to "AI unavailable" even though the model was fine.
+- **Changed:** separate budgets per feature (`Budgeted` wrapper: 16/min vandalism, 4/min Pulse) with a regression test, and Pulse keeps a summary under 3 minutes old when one refresh fails. The UI also stopped labelling unreviewed rule matches "AI unavailable" with a fake 100% confidence; they now read "strong rule match, not reviewed by AI".
+
+## 6. Testing against live data exposed what unit tests couldn't
+
+- **Did:** opened the dashboard on the live stream with llama3.2 running locally and read what it actually showed.
+- **Found:**
+  - Wikidata bulk edits filled the entire top 10 with item IDs (`Q141401630`), and the Pulse summary described those batches as "Wikipedia editors".
+  - On English Wikipedia, user sandboxes and noticeboards outranked articles.
+  - The model flagged 2 of 2 vandalism candidates at 100% confidence, one with the reason "no textual change".
+- **Changed:**
+  - Ingest Wikipedia editions only, and let only articles trend.
+  - Never send no-change edits to the model, and don't ask the model without a diff.
+  - Require the model to quote evidence that must appear verbatim in the diff, with a regression test built from the live failure.
+- **Lesson:** the tests passed against a fake model; the real model and real data needed their own look.
+
+## 7. Switching to Claude: the compatibility docs were wrong
+
+- **Asked:** whether Anthropic's OpenAI-compatible endpoint would work with the existing client. The answer, based on Anthropic's docs, was yes, and that `response_format` is ignored there.
+- **What happened:** every call failed, and the dashboard silently fell back to the numbers-only summary.
+  - First, the log only said "400 Bad Request". I added the provider's error message to `/health` (`llm_last_error`, never the key) so failures can be diagnosed without the terminal.
+  - That showed the endpoint *rejects* `response_format: json_object`.
+  - After that was fixed, the newer model rejected `temperature` too.
+- **Changed:** `temperature` and `response_format` are treated as optional. If a provider rejects one with a 400 that names it, the client drops it for that provider and retries; other 400s are not retried. Covered by tests using the exact error messages seen.
+- **Lesson:** trust the error message over the docs, and make errors visible.
+
 ## What I did not use AI for
 
 - <!-- e.g. choosing the architecture and trade-offs, the window semantics (ingest vs event time), deciding what to test, the vandalism criteria -->
