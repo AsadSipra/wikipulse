@@ -13,5 +13,6 @@ export default defineConfig({
       '/health': backend,
     },
   },
-  test: { globals: true, environment: 'node' },
+  // e2e/ holds Playwright specs, run separately with `npm run test:e2e`.
+  test: { globals: true, environment: 'node', exclude: ['e2e/**', 'node_modules/**'] },
 })
