@@ -1,9 +1,7 @@
 import { editKey } from '../types'
 import type { Flag } from '../types'
 
-// Flags arrive a few seconds after their edit (the LLM review is async), by
-// which time the edit may have scrolled out of the live feed. So they get
-// their own list as well as a badge in the feed.
+// Own list: a flag can arrive after its edit has scrolled out of the feed.
 export function FlaggedEdits({ flags }: { flags: Flag[] }) {
   if (flags.length === 0) return <p className="muted">No suspicious edits flagged yet.</p>
   return (

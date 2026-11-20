@@ -1,23 +1,4 @@
-"""Vandalism flagging in two stages.
-
-1. Rules (free, synchronous, every edit): score cheap signals such as an
-   anonymous editor, page blanking, a large unexplained removal, or a rude
-   comment. Most edits score 0 and stop here.
-2. LLM (rate-limited, async, candidates only): look at the actual diff and
-   decide, with a one-line reason and a quote from the diff as evidence.
-
-The LLM only judges what it can see: no diff, no AI verdict. And a "yes" is
-only published if its quoted evidence really appears in the diff, which
-catches small models that agree with the pre-filter or invent a reason.
-
-Only stage-2 candidates cost money, so the bill scales with suspicious edits,
-not with stream volume. Candidates wait in a small bounded queue; when it is
-full we drop new ones rather than fall behind the stream (a flag 10 minutes
-late is worthless on a live dashboard).
-
-We tune for precision: wrongly accusing an editor on a client dashboard is
-worse than missing a borderline case.
-"""
+"""Vandalism flags: a cheap rule pre-filter, then an LLM review of the diff for candidates only."""
 
 from __future__ import annotations
 
@@ -44,21 +25,18 @@ CANDIDATE_SCORE = 3
 RULES_ONLY_SCORE = 4  # without an LLM, only publish the strongest rule matches
 
 _REVERT = re.compile(r"\b(revert|reverted|undid|undo|rv|rvv)\b", re.IGNORECASE)
-# Deliberately short: this is a cheap pre-filter, the LLM makes the call.
 _RUDE = re.compile(r"\b(fuck\w*|shit\w*|stupid|idiot|sucks?|poop|lol+|haha\w*)\b", re.IGNORECASE)
 
 
 def score_edit(edit: Edit) -> tuple[int, list[str]]:
     """Return (score, reasons). Higher means more suspicious."""
-    if edit.bot or edit.namespace != 0:  # bots and non-article pages are out of scope
+    if edit.bot or edit.namespace != 0:
         return 0, []
 
-    # Size rules need both sizes: an unknown size is not evidence of removal.
+    # An unknown size is not evidence of removal.
     old, new, delta = edit.length_old, edit.length_new, edit.byte_delta
     blanked = old is not None and new is not None and old >= 2000 and new < 200
-    # A revert summary usually means someone is cleaning up vandalism, so it
-    # clears the weaker signals. It's free text the editor writes, though, so
-    # it can't hide a page being blanked.
+    # A revert summary clears weak signals, but it's free text, so it can't hide a blanking.
     if _REVERT.search(edit.comment) and not blanked:
         return 0, []
 
@@ -96,8 +74,7 @@ NO_CHANGE = "(no textual change)"
 
 
 class _Verdict(BaseModel):
-    # Strip before length checks, so a whitespace-only reason is rejected
-    # rather than published as an empty one.
+    # Strip first, so a whitespace-only reason fails the length check.
     model_config = ConfigDict(str_strip_whitespace=True)
 
     is_vandalism: bool
@@ -148,7 +125,6 @@ class VandalismService:
             "no_diff": 0, "no_change": 0, "rejected_unsupported": 0, "skipped_no_viewers": 0,
         }
 
-    # -- stage 1 ---------------------------------------------------------
     def consider(self, edit: Edit) -> None:
         score, reasons = score_edit(edit)
         if score < CANDIDATE_SCORE:
@@ -158,7 +134,6 @@ class VandalismService:
                 self._publish(edit, min(1.0, score / 6), _rules_reason(reasons), "rules")
             return
         if not self.has_viewers():
-            # Nobody would see the flag, so don't pay for a review.
             self.stats["skipped_no_viewers"] += 1
             return
         self.stats["candidates"] += 1
@@ -167,7 +142,6 @@ class VandalismService:
         except asyncio.QueueFull:
             self.stats["dropped"] += 1
 
-    # -- stage 2 ---------------------------------------------------------
     async def run(self) -> None:
         await asyncio.gather(*(self._worker() for _ in range(self.workers)))
 
@@ -188,24 +162,22 @@ class VandalismService:
         assert self.llm is not None
         diff = await self._fetch_diff(edit) if self.fetch_diffs else None
         if diff is None:
-            # New page, diff fetch failed, or diffs disabled: the model would be
-            # judging blind, so only a strong rule match is shown.
+            # Without a diff the model would judge blind: rules only.
             self.stats["no_diff"] += 1
             return self._rules_fallback(edit, reasons)
         if diff == NO_CHANGE:
-            self.stats["no_change"] += 1  # nothing visible changed, so nothing to vandalise
+            self.stats["no_change"] += 1
             return None
         try:
             raw = await self.llm.complete_json(SYSTEM_PROMPT, _describe(edit, reasons, diff))
             verdict = _Verdict.model_validate(raw)
         except (LLMError, ValidationError) as exc:
-            # Budget used up, model down, or a malformed reply: not reviewed by AI.
             log.info("LLM review unavailable (%s); using rules", exc)
             return self._rules_fallback(edit, reasons)
         self.stats["reviewed"] += 1
         if not verdict.is_vandalism or verdict.confidence < self.min_confidence:
             return None
-        # Check against the part of the diff the model actually saw.
+        # Only the part of the diff the model saw.
         if not evidence_in_diff(verdict.evidence, diff[:DIFF_PROMPT_LIMIT]):
             self.stats["rejected_unsupported"] += 1
             log.info("rejected flag on %r: evidence %r not found in diff", edit.title, verdict.evidence)
@@ -219,8 +191,7 @@ class VandalismService:
         return None
 
     async def _fetch_diff(self, edit: Edit) -> str | None:
-        """Fetch the change itself from the MediaWiki API. Best effort: on any
-        failure the edit isn't sent to the LLM (see `review`)."""
+        """The diff from the MediaWiki API, or None on any failure."""
         if not edit.revision_old or not edit.revision_new:
             return None
         try:
@@ -236,7 +207,6 @@ class VandalismService:
         except (httpx.HTTPError, KeyError, ValueError):
             return None
 
-    # -- output ----------------------------------------------------------
     def _publish(
         self, edit: Edit, confidence: float, reason: str, source: str, evidence: str | None = None
     ) -> Flag:
@@ -268,10 +238,7 @@ def _normalise(text: str) -> str:
 
 
 def evidence_in_diff(evidence: str, diff: str) -> bool:
-    """True if the model's quoted evidence really appears in the diff.
-
-    Tolerates case, whitespace, surrounding quotes and a leading +/- marker,
-    but not paraphrase: a reason the model can't point to isn't shown."""
+    """True if the quoted evidence appears in the diff (ignoring case, spacing, quotes, +/-)."""
     quote = _normalise(evidence).strip("\"'“”‘’").removeprefix("+ ").removeprefix("- ").strip()
     if len(quote) < 3:
         return False
@@ -290,7 +257,6 @@ def _describe(edit: Edit, reasons: list[str], diff: str) -> str:
         f"Editor: {'anonymous' if edit.anonymous else 'registered account'}",
         f"Size change: {size}",
         f"Pre-filter signals: {', '.join(reasons)}",
-        # Titles are written by editors too, so they go in a data block.
         untrusted("page title", edit.title, limit=200),
         untrusted("edit summary", edit.comment or "(none)", limit=300),
         untrusted("diff", diff, limit=DIFF_PROMPT_LIMIT),
@@ -298,9 +264,7 @@ def _describe(edit: Edit, reasons: list[str], diff: str) -> str:
     return "\n".join(parts)
 
 
-# MediaWiki puts several classes on a diff cell (e.g. "diff-addedline
-# diff-side-added" in current versions), so match the class as one token among
-# others, not as the whole attribute.
+# Diff cells carry several classes (e.g. "diff-addedline diff-side-added").
 _ROW = re.compile(
     r'<td class="[^"]*\bdiff-(addedline|deletedline)\b[^"]*"[^>]*>(.*?)</td>', re.DOTALL
 )
@@ -308,11 +272,7 @@ _TAG = re.compile(r"<[^>]+>")
 
 
 def diff_to_text(body: str, max_lines: int = 30) -> str | None:
-    """Turn MediaWiki's HTML diff table into compact '+ added' / '- removed' lines.
-
-    Returns NO_CHANGE only when the diff really has no changed lines, and None
-    when it has changed lines we couldn't read, so a format change is never
-    mistaken for "nothing changed"."""
+    """'+ added' / '- removed' lines; NO_CHANGE if nothing changed, None if unreadable."""
     lines = []
     for kind, cell in _ROW.findall(body):
         text = html.unescape(_TAG.sub("", cell)).strip()

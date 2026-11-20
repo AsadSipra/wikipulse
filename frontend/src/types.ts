@@ -47,7 +47,7 @@ export interface Flag {
   source: 'llm' | 'rules'
   diff_url: string | null
   created_at: number
-  evidence: string | null // verbatim excerpt from the diff that backs an AI flag
+  evidence: string | null // quote from the diff (AI flags only)
 }
 
 export interface Stats {
@@ -71,5 +71,5 @@ export type ClientMessage = { type: 'subscribe'; wiki: string | null }
 
 export type ConnectionStatus = 'stopped' | 'connecting' | 'open' | 'closed'
 
-/** Event ids are only unique within one wiki, so identity is wiki + id. */
+/** Ids are only unique within one wiki. */
 export const editKey = (wiki: string, id: number): string => `${wiki}:${id}`

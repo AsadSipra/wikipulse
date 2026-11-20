@@ -11,9 +11,7 @@ function socketUrl(): string {
   return `${proto}://${location.host}/ws`
 }
 
-/** Close a socket cleanly. Closing mid-handshake aborts the connection while
- * the server is already sending its first message, which the dev proxy
- * reports as an EPIPE error, so a connecting socket is closed once it opens. */
+/** Closing mid-handshake causes EPIPE errors in the dev proxy, so wait until it opens. */
 function closeSocket(ws: WebSocket) {
   if (ws.readyState === WebSocket.CONNECTING) {
     ws.addEventListener('open', () => ws.close(), { once: true })
@@ -22,9 +20,7 @@ function closeSocket(ws: WebSocket) {
   }
 }
 
-/** Owns the WebSocket: connects while the demo is running, reconnects with
- * backoff, and re-subscribes. The server only spends on AI while a dashboard
- * is connected, so nothing is called until someone presses Start. */
+/** WebSocket lifecycle: connects only while the demo runs, reconnects with backoff. */
 export function useWikiPulse() {
   const [state, dispatch] = useReducer(reducer, initialState)
   const [running, setRunning] = useState(false)
@@ -44,9 +40,7 @@ export function useWikiPulse() {
       dispatch({ kind: 'status', status: 'connecting' })
       const ws = new WebSocket(socketUrl())
       wsRef.current = ws
-      // Only the current socket may touch state. That ignores a socket from an
-      // unmounted component (React StrictMode mounts twice in development) and
-      // one we closed on purpose but whose events arrive late.
+      // Ignore stale sockets (StrictMode double mount, or closed on purpose).
       const current = () => !disposed && wsRef.current === ws
 
       ws.onopen = () => {
@@ -60,7 +54,7 @@ export function useWikiPulse() {
         try {
           dispatch({ kind: 'message', message: JSON.parse(event.data) as ServerMessage })
         } catch {
-          // A malformed frame shouldn't take the dashboard down.
+          // Skip malformed frames.
         }
       }
       ws.onclose = () => {

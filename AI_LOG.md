@@ -1,64 +1,100 @@
 # AI log
 
-<!--
-DRAFT. Rewrite each entry in your own words before submitting, and keep only
-what you actually did and agree with. Add the AI-feature work as it happens.
-They will ask about these entries in the interview.
--->
+## How I work with AI
 
-Tool used: Claude (as a pair-programmer: scaffolding, first drafts, and reviewing its own output against tests).
+In my day-to-day work I use Claude Code inside a workspace I've set up for it. That workspace has three parts:
 
-## 1. Rolling-window expiry: AI was wrong
+- **A rulebook:** coding conventions, git and PR rules, and a mandatory process for every ticket.
+- **A knowledge base:** architecture notes, per-module notes and a growing list of gotchas, all indexed so the AI reads only what's relevant.
+- **A work log:** one entry per finished task, with the root cause, the changes and how it was tested.
 
-- **Asked:** a sliding 5-minute window with top-10 pages and per-wiki counts.
-- **Got:** a first draft that, on expiry, rebuilt the per-wiki totals by expanding each page counter into individual items. That costs O(number of edits) per expired bucket, and it relied on a periodic `+Counter` clean-up that left zero-count keys in memory between runs.
-- **Changed:** each bucket now keeps its own per-wiki counter, and a small `_subtract` helper deletes keys exactly when they reach zero. I added a test asserting the totals are empty after the window passes.
+Each ticket follows the same phases, and the AI is never allowed to skip a human step:
 
-## 2. Top-pages links
+1. **Investigate.** A research agent reads the code and data and reports facts, open questions and risks. It never guesses at a business rule; those questions come to me.
+2. **Decide and plan.** I answer the open questions. A planning agent proposes the smallest correct design, and nothing is built until I approve the plan.
+3. **Implement.** The approved plan is split into small, independent tasks, each done by a separate agent that follows the conventions and stops if the plan turns out to be wrong.
+4. **Test.** A test-planning agent writes a concrete checklist from the real code, and I run it.
+5. **Review.** I review the change myself. Then a stronger model, not the one that wrote the code, does a skeptical review. I verify the result before opening the PR.
+6. **Learn.** Durable lessons go into the knowledge base. Every few tickets, a retrospective agent looks for repeated problems and suggests improvements to the process, and I decide which to adopt.
 
-- **Got:** page URLs built by searching the last 50 feed edits for that wiki's hostname.
-- **Rejected:** on a quiet wiki, a page can stay in the top 10 longer than its edit stays in the last 50, so the link would silently become `null`.
-- **Changed:** a small `wiki → host` map, updated on every edit (around 1,000 entries at most).
+The effort scales with risk: a routine change gets a lighter pass, while anything touching money, auth or data migrations gets the full process.
 
-## 3. Chart library
+For this take-home I used a lighter version of the same loop:
+- I asked before assuming, and decided the open questions myself.
+- Claude wrote changes straight into my project, where I reviewed them as they happened.
+- I ran every test and command myself.
+- An independent review pass checked the code.
+- Lessons went into the README's decisions and into this log.
 
-- **Suggested:** adding a charting library for the edits-per-minute chart.
-- **Rejected:** one line series doesn't need it. A ~25-line SVG component keeps the bundle small and has no dependency to explain.
+## Examples
 
-## 4. Debugging a "broken" WebSocket
+I used Claude as a pair programmer: scaffolding, first drafts, debugging, and reviewing its output against tests and real data. Every change went through tests and a manual check before I kept it. Below are five examples, three of them times the AI was wrong.
 
-- A headless Chrome screenshot showed the dashboard stuck on "Reconnecting". Rather than change the code, we tested the socket directly (both the backend and the Vite proxy returned `init` messages). The cause was the screenshot tool's virtual-time mode, not the app. Lesson: confirm the bug exists before fixing it.
+### 1. Rolling-window expiry (AI was wrong)
 
-## 5. Shared LLM rate limit starved the Pulse summary: AI was wrong
+- **Asked:** a 5-minute sliding window giving the top 10 pages and per-wiki counts.
+- **Got:** per-second buckets, but on expiry the draft rebuilt the per-wiki totals by expanding every page counter. That is O(edits) work per expired second, and it left zero-count keys in memory.
+- **Kept:** the per-second bucket design.
+- **Changed:** each bucket keeps its own per-wiki counter, and a small `_subtract` helper removes keys exactly when they reach zero, so expiry costs only what that second contained.
+- **Why:** the stream peaks at hundreds of edits a minute, so the window has to stay cheap and bounded. A test checks the totals are empty once the window has passed.
 
-- **Asked:** rate-limit LLM calls to protect the API key's spending limit.
-- **Got:** one shared limiter of 20 calls a minute for the whole client.
-- **What went wrong:** running the dashboard against a stand-in model at 3× replay speed, the vandalism reviews used the whole budget, and the Pulse card fell back to "AI unavailable" even though the model was fine.
-- **Changed:** separate budgets per feature (`Budgeted` wrapper: 16/min vandalism, 4/min Pulse) with a regression test, and Pulse keeps a summary under 3 minutes old when one refresh fails. The UI also stopped labelling unreviewed rule matches "AI unavailable" with a fake 100% confidence; they now read "strong rule match, not reviewed by AI".
+### 2. One shared rate limit starved the Pulse summary (AI was wrong)
 
-## 6. Testing against live data exposed what unit tests couldn't
+- **Asked:** rate-limit LLM calls to protect the API budget.
+- **Got:** one limiter of 20 calls a minute shared by the whole client.
+- **What went wrong:** with replay running fast, vandalism reviews used the whole budget, and the Pulse card showed "AI unavailable" even though the model was fine.
+- **Changed:**
+  - Separate limits per feature (vandalism 16 a minute, Pulse 4), with a regression test.
+  - Pulse keeps its last good summary (if under 3 minutes old) when one refresh fails.
+  - Unreviewed rule matches stopped showing a fake 100% AI confidence. They now read "strong rule match, not reviewed by AI".
+- **Why:** one noisy feature shouldn't silently break another, and the UI shouldn't claim the AI judged something it never saw.
 
-- **Did:** opened the dashboard on the live stream with llama3.2 running locally and read what it actually showed.
+### 3. Live data exposed what the unit tests couldn't
+
+- **Asked:** for the features to be complete, and all tests passed against a fake model.
+- **Did:** opened the dashboard on the live stream with a real model and read what it showed.
 - **Found:**
-  - Wikidata bulk edits filled the entire top 10 with item IDs (`Q141401630`), and the Pulse summary described those batches as "Wikipedia editors".
-  - On English Wikipedia, user sandboxes and noticeboards outranked articles.
+  - Wikidata bulk edits filled the top 10 with item IDs (`Q141401630`), and Pulse called them "Wikipedia editors".
+  - User sandboxes and noticeboards outranked articles.
   - The model flagged 2 of 2 vandalism candidates at 100% confidence, one with the reason "no textual change".
 - **Changed:**
-  - Ingest Wikipedia editions only, and let only articles trend.
-  - Never send no-change edits to the model, and don't ask the model without a diff.
-  - Require the model to quote evidence that must appear verbatim in the diff, with a regression test built from the live failure.
-- **Lesson:** the tests passed against a fake model; the real model and real data needed their own look.
+  - Only Wikipedia editions are ingested, and only articles can trend.
+  - Edits with no visible change never reach the model.
+  - The model must quote evidence, and a flag is shown only if that quote really appears in the diff. A regression test is built from the live failure.
+- **Why:** "tests pass" proved the wiring, not the quality. Real data was the only way to see that.
 
-## 7. Switching to Claude: the compatibility docs were wrong
+### 4. The compatibility docs were wrong (AI was wrong)
 
-- **Asked:** whether Anthropic's OpenAI-compatible endpoint would work with the existing client. The answer, based on Anthropic's docs, was yes, and that `response_format` is ignored there.
-- **What happened:** every call failed, and the dashboard silently fell back to the numbers-only summary.
-  - First, the log only said "400 Bad Request". I added the provider's error message to `/health` (`llm_last_error`, never the key) so failures can be diagnosed without the terminal.
-  - That showed the endpoint *rejects* `response_format: json_object`.
-  - After that was fixed, the newer model rejected `temperature` too.
-- **Changed:** `temperature` and `response_format` are treated as optional. If a provider rejects one with a 400 that names it, the client drops it for that provider and retries; other 400s are not retried. Covered by tests using the exact error messages seen.
-- **Lesson:** trust the error message over the docs, and make errors visible.
+- **Asked:** whether Anthropic's OpenAI-compatible endpoint would work with my client. The answer, based on the docs, was yes, with `response_format` ignored.
+- **What happened:** every call failed, and the dashboard quietly fell back to the numbers-only summary. The log only said "400 Bad Request".
+- **Changed:**
+  - The provider's error message, with any key redacted, now appears in `/health`. That showed the endpoint rejects `response_format`, and then `temperature` too.
+  - Both are now optional: if a provider rejects one with a 400 that names it, the client drops it and retries. Other errors are not retried. Tests use the exact error messages.
+- **Why:** trust the error over the docs, and make failures visible without a terminal.
+
+### 5. Controlling AI cost on a public demo
+
+- **Asked:** I wanted a Start button so the hosted demo doesn't call the LLM around the clock.
+- **Got:** a counter-proposal: pause AI on the server whenever no browser is connected, and disconnect a tab that has been hidden for 3 minutes.
+- **Kept:** the server-side pause. Pulse and vandalism review stop when nobody is connected, and `/health` shows it.
+- **Rejected:** the hidden-tab auto-disconnect. I replaced it with an explicit Start/Stop demo control, because a reviewer should see clearly when the demo is running rather than have it change behind their back.
+- **Where the AI was right:** I then suggested removing the server-side pause, since the button seemed to cover it. The AI pointed out that the calls happen on the server, so without that check the button would only hide results while the spend continued. I kept it.
+- **Accepted risk:** a tab left on Start keeps the AI running. This is documented in the README, with a per-demo time limit as the next step.
 
 ## What I did not use AI for
 
-- <!-- e.g. choosing the architecture and trade-offs, the window semantics (ingest vs event time), deciding what to test, the vandalism criteria -->
+- **Product decisions:**
+  - **Starting before the starter files arrived.** Only the brief came at first. Rather than wait, I built against the live stream and planned to merge the files later. When `sample_events.jsonl` arrived, it went in as the default replay with its traps handled.
+  - **Asking few questions up front.** I kept the clarifying questions to the few that could block the work (missing files, an API key, how to share the result), and made reasonable assumptions for the rest, recorded in the README.
+  - **A Start/Stop demo instead of automatic pausing.** A reviewer should always see clearly whether the demo is running.
+  - **Accepting the left-running-demo risk.** It's documented, with a per-demo time limit as the next step, rather than adding more machinery to a demo.
+  - **Switching from a local model to a hosted one** once the local model's quality wasn't good enough for vandalism verdicts.
+  - **Capping cost on every AI call.** I asked for a max-tokens setting, so each reply is short and its cost is bounded.
+  - **Hosting on AWS with credits I already had,** so the demo runs at no extra cost.
+  - **Showing the product with a GIF of the live site** rather than a screenshot, because a live dashboard is best judged in motion.
+- **Choosing which review findings to act on.** I decided which feedback was worth the time and which to leave.
+- **Hands-on testing:**
+  - running the app locally and on the live stream
+  - reading the dashboard and judging when the output looked wrong (example 3 came from looking at the live dashboard, not from tests)
+  - running every test and command on my own machine
+- **Accounts and secrets.** I did the AWS setup and the credit and plan checks, managed GitHub, and kept API keys only in my local `.env`, never in prompts or the repo.

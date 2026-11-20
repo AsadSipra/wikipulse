@@ -1,21 +1,15 @@
-"""Domain model for a single Wikipedia change, plus parsing from the raw stream.
-
-The Wikimedia `recentchange` stream carries many event types (edits, page
-creations, log entries, categorisation changes) across every Wikimedia
-project. We normalise only what the dashboard needs and drop the rest early,
-so everything downstream works with one small, typed shape.
-"""
+"""The Edit model and parsing of raw stream events."""
 
 from __future__ import annotations
 
 import ipaddress
+import time
 from typing import Any, Literal
 from urllib.parse import quote
 
 from pydantic import BaseModel, ValidationError
 
-# Edits and page creations are what "editing activity" means to a reader.
-# Log events (blocks, moves, uploads) and categorize events are noise here.
+# Log and categorize events are not editing activity.
 TRACKED_TYPES = frozenset({"edit", "new"})
 
 
@@ -31,7 +25,7 @@ class Edit(BaseModel):
     namespace: int
     comment: str
     minor: bool
-    timestamp: int  # unix seconds, as reported by Wikimedia
+    timestamp: int  # unix seconds
     length_old: int | None
     length_new: int | None
     revision_old: int | None
@@ -39,10 +33,7 @@ class Edit(BaseModel):
 
     @property
     def byte_delta(self) -> int | None:
-        """Size change in bytes, or None when the stream didn't report it.
-
-        Unknown is not zero: treating a missing size as 0 would make an
-        ordinary edit look like page blanking."""
+        """Size change in bytes, or None if unknown (not 0, which would look like blanking)."""
         if self.length_new is None:
             return None
         if self.length_old is None:
@@ -63,7 +54,7 @@ class Edit(BaseModel):
         return url
 
     def to_wire(self) -> dict[str, Any]:
-        """Shape sent to the browser (kept flat and small on purpose)."""
+        """Shape sent to the browser."""
         return {
             "id": self.id,
             "wiki": self.wiki,
@@ -82,23 +73,18 @@ class Edit(BaseModel):
 
 
 def page_url(server_name: str, title: str) -> str:
-    """Article URL. Titles may contain ?, # or %, which must be escaped or the
-    browser treats them as a query string or fragment."""
+    """Article URL, with ?, # and % in titles escaped."""
     path = quote(title.replace(" ", "_"), safe="/:@!$()*,;'~")
     return f"https://{server_name}/wiki/{path}"
 
 
 def is_wikipedia(server_name: str) -> bool:
-    """True for Wikipedia language editions (en.wikipedia.org, ur.wikipedia.org, ...).
-
-    Excludes sister projects. Wikidata alone is a large share of the stream,
-    mostly bulk edits from tools like QuickStatements that aren't flagged as
-    bots, and its items (Q141401630) mean nothing to a news reader."""
+    """True for Wikipedia language editions; excludes Wikidata, Commons and other sister projects."""
     return server_name.endswith(".wikipedia.org")
 
 
 def is_anonymous(user: str) -> bool:
-    """IP editors, plus temporary accounts (Wikimedia names these `~YYYY-...`)."""
+    """IP editors and temporary accounts (`~YYYY-...`)."""
     if user.startswith("~"):
         return True
     try:
@@ -108,14 +94,20 @@ def is_anonymous(user: str) -> bool:
     return True
 
 
-def parse_event(raw: Any) -> Edit | None:
-    """Turn a raw stream event into an Edit, or None if we don't track it or
-    the event is malformed.
+# Larger than any seconds value until the year 5138, so it must be milliseconds.
+_MS_THRESHOLD = 100_000_000_000
 
-    Every field is shape-checked before use, so one bad event is skipped
-    instead of stopping ingestion. Booleans must be real booleans: a string
-    like "false" is not silently read as True.
-    """
+
+def normalize_timestamp(value: Any) -> int | None:
+    """Unix seconds, converting milliseconds; None if not a number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    seconds = value / 1000 if value >= _MS_THRESHOLD else value
+    return int(seconds)
+
+
+def parse_event(raw: Any) -> Edit | None:
+    """An Edit, or None for untracked or malformed events (never raises)."""
     if not isinstance(raw, dict) or raw.get("type") not in TRACKED_TYPES:
         return None
     meta = raw.get("meta")
@@ -131,6 +123,13 @@ def parse_event(raw: Any) -> Edit | None:
         return None
     if comment is not None and not isinstance(comment, str):
         return None
+    raw_ts = raw.get("timestamp")
+    timestamp = normalize_timestamp(raw_ts)
+    if timestamp is None:
+        if raw_ts is not None:
+            return None
+        # Missing: keep the edit; stats use arrival time anyway.
+        timestamp = int(time.time())
     try:
         return Edit.model_validate(
             {
@@ -145,7 +144,7 @@ def parse_event(raw: Any) -> Edit | None:
                 "namespace": raw.get("namespace", 0),
                 "comment": comment or "",
                 "minor": raw.get("minor", False),
-                "timestamp": raw.get("timestamp"),
+                "timestamp": timestamp,
                 "length_old": length.get("old"),
                 "length_new": length.get("new"),
                 "revision_old": revision.get("old"),

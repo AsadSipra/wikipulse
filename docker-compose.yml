@@ -1,15 +1,12 @@
 services:
   backend:
     build: ./backend
-    # Every setting in .env reaches the backend (AI_ENABLED, budgets, WIKIPEDIA_ONLY, ...),
-    # so the container behaves like a local run. .env is optional: defaults apply without it.
+    # .env is optional; without it the defaults apply.
     env_file:
       - path: .env
         required: false
     environment:
-      # Inside the container "localhost" is the container itself, so a local Ollama
-      # must be reached through the host. DOCKER_LLM_BASE_URL overrides this;
-      # otherwise LLM_BASE_URL from .env is used, then the host's Ollama.
+      # "localhost" in a container is the container, so reach a local Ollama via the host.
       LLM_BASE_URL: ${DOCKER_LLM_BASE_URL:-${LLM_BASE_URL:-http://host.docker.internal:11434/v1}}
     extra_hosts:
       - "host.docker.internal:host-gateway"  # needed on Linux; built in on Docker Desktop
@@ -18,7 +15,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      # 8080 locally; set FRONTEND_PORT=80 on a server so the plain IP works.
+      # Use FRONTEND_PORT=80 on a server.
       - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       backend:

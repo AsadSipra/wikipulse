@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from app.llm import Budgeted, LLMError, OpenAICompatibleLLM, RateLimiter, extract_json, redact, untrusted
+from app.llm import Budgeted, LLMError, OpenAICompatibleLLM, RateLimiter, _reply_text, extract_json, redact, untrusted
 
 from .fakes import FakeLLM
 
@@ -164,3 +164,9 @@ async def test_public_error_text_is_redacted_and_short():
 
 def test_redact_masks_bearer_tokens():
     assert redact("Authorization: Bearer abc.def") == "Authorization: [redacted]"
+
+
+def test_empty_reply_error_names_the_finish_reason():
+    resp = httpx.Response(200, json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})
+    with pytest.raises(LLMError, match="finish_reason=length"):
+        _reply_text(resp)

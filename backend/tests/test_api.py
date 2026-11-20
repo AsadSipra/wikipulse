@@ -12,12 +12,15 @@ from app.main import _INVALID, create_app, parse_subscription
 from app.sources import ReplaySource
 
 from .fakes import FakeLLM
+from .test_models import make_raw
 
-SAMPLE = Path(__file__).parent.parent / "data" / "sample_events.jsonl"
+SAMPLE = Path(__file__).parent.parent / "data" / "sample_events.jsonl"  # provided by Geeks Ltd
+# Has page blankings, which the flag tests need.
+SYNTHETIC = Path(__file__).parent / "data" / "synthetic_events.jsonl"
 
 
-def make_client(llm=None):
-    source = ReplaySource(SAMPLE, speed=0, loop=False)  # speed=0: as fast as possible
+def make_client(llm=None, sample=SAMPLE):
+    source = ReplaySource(sample, speed=0, loop=False)  # speed=0: as fast as possible
     cfg = Settings(source="replay", fetch_diffs=False, pulse_interval_seconds=0.05)
     app = create_app(cfg, source=source, llm=llm)
     return app, TestClient(app)
@@ -34,6 +37,7 @@ def test_health_reports_ingested_events():
     assert body["events_seen"] > 0
     assert body["events_skipped"] > 0
     assert body["events_filtered_non_wikipedia"] > 0  # the sample includes Commons edits
+    assert body["events_duplicate"] > 0  # and some events delivered twice
 
 
 def test_websocket_init_then_ticks_and_wiki_subscription():
@@ -60,11 +64,9 @@ def test_websocket_init_then_ticks_and_wiki_subscription():
 
 
 def test_flags_and_pulse_reach_the_browser():
-    # Diffs are off in these tests, so vandalism never calls the LLM (strong rule
-    # matches still flag) and the only LLM caller is Pulse. The LLM review path
-    # is covered in test_vandalism.py.
+    # Diffs are off, so only Pulse calls the LLM (review is tested in test_vandalism.py).
     llm = FakeLLM({"headline": "Busy afternoon", "summary": "Lots happening."})
-    app, client = make_client(llm)
+    app, client = make_client(llm, sample=SYNTHETIC)
     with client, client.websocket_connect("/ws") as ws:
         flags, pulse = [], None
         for _ in range(40):
@@ -175,3 +177,27 @@ def test_ai_reports_paused_with_no_viewers_and_resumes_with_one():
         with client.websocket_connect("/ws") as ws:
             ws.receive_json()
             assert client.get("/health").json()["ai"]["paused_no_viewers"] is False
+
+
+class SilentLiveSource:
+    """A live source that connected, then stopped sending."""
+
+    kind = "live"
+    connected = True
+
+    async def events(self):
+        yield make_raw()
+        await asyncio.sleep(3600)
+
+
+def test_health_reports_a_silent_live_stream_as_stalled(monkeypatch):
+    app = create_app(Settings(fetch_diffs=False), source=SilentLiveSource(), llm=None)
+    with TestClient(app) as client:
+        for _ in range(50):
+            if client.get("/health").json()["events_seen"]:
+                break
+            time.sleep(0.02)
+        assert client.get("/health").status_code == 200
+        monkeypatch.setattr("app.main.STALL_SECONDS", -1)  # treat any silence as a stall
+        resp = client.get("/health")
+    assert resp.status_code == 503 and resp.json()["status"] == "stalled"

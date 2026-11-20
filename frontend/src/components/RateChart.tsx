@@ -1,13 +1,10 @@
 import type { RatePoint } from '../types'
 
-// A plain SVG line is enough for one series; no chart library needed.
 const W = 600
 const H = 120
 const PAD = 4
 
-// Each point is the edits in one 10-second slice, scaled to a per-minute rate.
-// That reacts faster than the headline number (a rolling 60-second count), so
-// the two can differ slightly; the caption says so.
+// Points are 10-second slices scaled to edits/min, so they can differ from the 60s headline.
 export function RateChart({ series }: { series: RatePoint[] }) {
   if (series.length < 2) return <div className="chart-empty">Waiting for data…</div>
   const max = Math.max(1, ...series.map((p) => p.rate))

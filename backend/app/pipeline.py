@@ -1,13 +1,4 @@
-"""Glue between the event source, the stats, and the connected browsers.
-
-Two loops run concurrently:
-  * ingest: read events as fast as they arrive, parse, update stats, buffer.
-  * tick:   once a second, push a stats snapshot plus the buffered edits.
-
-Batching on a tick (instead of one WebSocket message per edit) caps the
-message rate per client regardless of stream volume, which is what keeps the
-browser smooth during spikes.
-"""
+"""Connects the event source, the stats and the browsers: an ingest loop and a 1-second push tick."""
 
 from __future__ import annotations
 
@@ -29,6 +20,7 @@ log = logging.getLogger(__name__)
 
 RECENT_SIZE = 50  # edits sent to a client when it first connects
 MAX_BATCH = 200  # cap per tick; the feed only shows the newest anyway
+SEEN_SIZE = 10_000  # recent keys kept for duplicate detection
 
 
 class Pipeline:
@@ -48,19 +40,22 @@ class Pipeline:
         self.vandalism = vandalism
         self.wikipedia_only = wikipedia_only
         self.recent: deque[Edit] = deque(maxlen=RECENT_SIZE)
-        # (wiki, title, comment) for the last few thousand edits; feeds the Pulse prompt.
+        # (wiki, title, comment) of recent edits, for the Pulse prompt.
         self.comment_log: deque[tuple[str, str, str]] = deque(maxlen=3000)
         self.pulse: PulseService | None = None
         self._pending: deque[Edit] = deque(maxlen=MAX_BATCH)
-        self.servers: dict[str, str] = {}  # wiki -> host, ~1k entries at most
+        self.servers: dict[str, str] = {}  # wiki -> host
         self.parse_skipped = 0  # untracked event types, canaries, malformed events
         self.filtered_out = 0  # valid edits from sister projects (Wikidata, Commons, ...)
+        self.duplicates = 0
+        self._seen: set[tuple[str, int]] = set()
+        self._seen_order: deque[tuple[str, int]] = deque()
         self.started_at = time.time()
         self.failure: BaseException | None = None
         self.last_event_at: float | None = None
 
     def has_viewers(self) -> bool:
-        """True while at least one dashboard is connected. AI work pauses otherwise."""
+        """AI work pauses while no dashboard is connected."""
         return bool(self.hub.clients)
 
     def attach_pulse(self, llm: LLM | None, interval_seconds: float) -> PulseService:
@@ -70,11 +65,7 @@ class Pipeline:
         return self.pulse
 
     async def run(self) -> None:
-        """Run ingest, tick, Pulse and vandalism review as one unit.
-
-        A TaskGroup owns the child tasks: if one fails, the others are
-        cancelled instead of carrying on half-working, and the failure is
-        recorded so /health can report it."""
+        """Run all loops in one TaskGroup: if one fails, all stop and /health reports it."""
         try:
             async with asyncio.TaskGroup() as group:
                 group.create_task(self._ingest(), name="ingest")
@@ -92,6 +83,9 @@ class Pipeline:
         if edit is None:
             self.parse_skipped += 1
             return None
+        if self._already_seen((edit.wiki, edit.id)):
+            self.duplicates += 1
+            return None
         if self.wikipedia_only and not is_wikipedia(edit.server_name):
             self.filtered_out += 1
             return None
@@ -104,6 +98,15 @@ class Pipeline:
         if self.vandalism:
             self.vandalism.consider(edit)
         return edit
+
+    def _already_seen(self, key: tuple[str, int]) -> bool:
+        if key in self._seen:
+            return True
+        self._seen.add(key)
+        self._seen_order.append(key)
+        if len(self._seen_order) > SEEN_SIZE:
+            self._seen.discard(self._seen_order.popleft())
+        return False
 
     async def _ingest(self) -> None:
         async for raw in self.source.events():
@@ -149,10 +152,8 @@ class Pipeline:
                 for (w, title), count in self.stats.top_pages(10, wiki)
             ],
             "wikis": [{"wiki": w, "count": c} for w, c in self.stats.wikis()],
-            # Pulse is global: one summary of the whole stream, refreshed on a timer.
             "pulse": self.pulse.latest.to_wire() if self.pulse and self.pulse.latest else None,
             "connected": getattr(self.source, "connected", True),
-            # So the UI can say what it's showing: live or recorded data, bots or not.
             "source": getattr(self.source, "kind", "live"),
             "include_bots": self.stats.include_bots,
             "generated_at": time.time(),

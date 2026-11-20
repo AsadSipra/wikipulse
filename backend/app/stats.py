@@ -1,16 +1,4 @@
-"""Rolling statistics over a sliding time window.
-
-Design: time is split into 1-second buckets kept in a deque. Each bucket holds
-a Counter of pages edited in that second. Alongside, we keep *running totals*
-for the whole window. When a bucket falls out of the window we subtract it
-from the totals instead of re-scanning everything, so recording an edit and
-expiring old data are both O(1) amortised per event, no matter how busy the
-stream is.
-
-Windows use ingest time (when we saw the edit), not the event's own timestamp.
-That keeps the numbers meaningful when replaying an old recording and avoids
-clock-skew surprises; at stream latency (~1s) the difference is negligible.
-"""
+"""Rolling statistics over a sliding window of 1-second buckets with running totals."""
 
 from __future__ import annotations
 
@@ -46,7 +34,7 @@ class RollingStats:
         self._buckets: deque[_Bucket] = deque()
         self._page_totals: Counter[PageKey] = Counter()
         self._wiki_totals: Counter[str] = Counter()
-        self.total_seen = 0  # lifetime counter, handy for the health endpoint
+        self.total_seen = 0
 
     def record(self, edit: Edit) -> None:
         self.total_seen += 1
@@ -60,8 +48,7 @@ class RollingStats:
         bucket.wikis[edit.wiki] += 1
         bucket.total += 1
         self._wiki_totals[edit.wiki] += 1
-        # Every edit counts towards the rate, but only articles (namespace 0)
-        # can trend: user pages, sandboxes and noticeboards are noise to a reader.
+        # Every edit counts towards the rate, but only articles can trend.
         if edit.namespace == ARTICLE_NAMESPACE:
             key = (edit.wiki, edit.title)
             bucket.pages[key] += 1
@@ -111,7 +98,7 @@ class RollingStats:
             (k, c) for k, c in self._page_totals.items()
             if wiki is None or k[0] == wiki
         )
-        # Ties broken by title so the table doesn't flicker between equal pages.
+        # Tie-break on title so equal pages don't swap places.
         return sorted(items, key=lambda kc: (-kc[1], kc[0][1]))[:n]
 
     def wikis(self) -> list[tuple[str, int]]:
@@ -120,8 +107,7 @@ class RollingStats:
 
 
 def _subtract(totals: Counter, expired: Counter) -> None:
-    """Remove an expired bucket from running totals, deleting keys that hit zero
-    so the totals only ever hold pages edited inside the window."""
+    """Subtract an expired bucket, deleting keys that reach zero."""
     for key, n in expired.items():
         remaining = totals[key] - n
         if remaining > 0:

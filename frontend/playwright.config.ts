@@ -15,12 +15,12 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   use: {
     baseURL: `http://localhost:${FRONTEND_PORT}`,
-    // CI or a machine without `npx playwright install` can point at an installed Chrome.
+    // Optional: use an installed Chrome instead of Playwright's.
     launchOptions: process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {},
   },
   webServer: [
     {
-      command: `cd ../backend && WIKIPULSE_SOURCE=replay REPLAY_SPEED=5 AI_ENABLED=false ${python} -m uvicorn app.main:app --port ${BACKEND_PORT}`,
+      command: `cd ../backend && WIKIPULSE_SOURCE=replay REPLAY_FILE=tests/data/synthetic_events.jsonl REPLAY_SPEED=5 AI_ENABLED=false ${python} -m uvicorn app.main:app --port ${BACKEND_PORT}`,
       url: `http://localhost:${BACKEND_PORT}/health`,
       reuseExistingServer: false,
       timeout: 30_000,

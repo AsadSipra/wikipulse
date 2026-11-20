@@ -1,12 +1,4 @@
-"""Pulse: a short plain-English summary of what is trending right now.
-
-Runs on a timer (default every 60s), not per request, so cost is fixed no
-matter how many people have the dashboard open. It also skips the LLM call
-entirely when the top pages haven't changed since the last summary.
-
-If the LLM is unavailable, slow or rate-limited, we publish a deterministic
-summary built from the numbers, so the card never goes blank.
-"""
+"""Pulse: a short trend summary refreshed on a timer, with a numbers-only fallback."""
 
 from __future__ import annotations
 
@@ -25,8 +17,8 @@ from .stats import RollingStats
 log = logging.getLogger(__name__)
 
 IDLE_POLL_SECONDS = 5.0  # how often to check for viewers while paused
-STALE_AFTER = 180.0  # seconds an AI summary may be kept when a refresh fails
-MAX_AGE = 300.0  # refresh at least this often, even if the leading pages haven't changed
+STALE_AFTER = 180.0  # keep an AI summary this long if a refresh fails
+MAX_AGE = 300.0  # refresh at least this often
 
 SYSTEM_PROMPT = """You are an analyst for a media-monitoring team watching live Wikipedia edits.
 Given the most-edited pages of the last 5 minutes, explain in plain English what seems to be trending and why.
@@ -39,7 +31,6 @@ Reply with JSON only: {"headline": "<max 8 words>", "summary": "<2-3 sentences>"
 
 
 class _PulseReply(BaseModel):
-    # Strip before length checks, so a whitespace-only field is rejected.
     model_config = ConfigDict(str_strip_whitespace=True)
 
     headline: str = Field(min_length=1, max_length=120)
@@ -75,11 +66,8 @@ class PulseService:
         self._last_key: tuple[Any, ...] | None = None
 
     async def run(self) -> None:
-        await asyncio.sleep(min(15.0, self.interval_seconds))  # let the window fill a little first
+        await asyncio.sleep(min(15.0, self.interval_seconds))  # let the window fill
         while True:
-            # A summary nobody is looking at is wasted spend, so the loop idles
-            # while no dashboard is connected and refreshes within a few
-            # seconds of someone opening it.
             if not self.has_viewers():
                 await asyncio.sleep(min(IDLE_POLL_SECONDS, self.interval_seconds))
                 continue
@@ -92,7 +80,7 @@ class PulseService:
     async def refresh(self) -> Pulse | None:
         top = self.stats.top_pages(10)
         if not top:
-            # Nothing in the window: drop the old summary rather than show it as current.
+            # Nothing in the window: don't show an old summary as current.
             self.latest, self._last_key = None, None
             return None
         key = tuple(k for k, _ in top[:5])
@@ -102,13 +90,13 @@ class PulseService:
             and self.latest.source == "llm"
             and time.time() - self.latest.generated_at < MAX_AGE
         ):
-            return self.latest  # nothing new to say yet; don't spend a call
+            return self.latest  # nothing changed: skip the call
 
         pulse = await self._ask_llm(top) if self.llm else None
         if pulse is not None:
             self._last_key = key
         elif self.latest and self.latest.source == "llm" and time.time() - self.latest.generated_at < STALE_AFTER:
-            return self.latest  # one failed refresh: a slightly old AI summary beats a numbers-only one
+            return self.latest  # a recent AI summary beats the fallback
         else:
             pulse = fallback_pulse(top, self.stats.edits_per_minute())
         self.latest = pulse
@@ -125,7 +113,6 @@ class PulseService:
         prompt = "\n".join([
             f"Edits per minute, all Wikipedias, {scope}: {self.stats.edits_per_minute()}",
             "Most-edited pages in the last 5 minutes, with recent edit comments:",
-            # Titles and comments are both written by editors, so they're data.
             untrusted("top pages", "\n".join(pages), limit=4000),
         ])
         try:
@@ -146,10 +133,7 @@ def fallback_pulse(top: list[tuple[tuple[str, str], int]], epm: int) -> Pulse:
 
 
 def comments_index(log: Any):
-    """Lookup of recent comments per page from a deque of (wiki, title, comment).
-
-    Scanning a bounded log every 60s is cheaper and simpler than keeping a
-    per-page index up to date on every edit."""
+    """Recent comments per page, scanned from the bounded (wiki, title, comment) log."""
 
     def lookup(wiki: str, title: str) -> list[str]:
         return [c for w, t, c in reversed(log) if w == wiki and t == title]

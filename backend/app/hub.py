@@ -1,10 +1,4 @@
-"""WebSocket fan-out to dashboard clients.
-
-Each client may subscribe to one wiki (or all). Filtering happens on the
-server so a client watching a small wiki doesn't receive the full firehose.
-A slow client never blocks the others: sends run concurrently with a timeout,
-and a client that fails or times out is dropped.
-"""
+"""WebSocket fan-out with per-client wiki filtering; slow clients are dropped."""
 
 from __future__ import annotations
 
@@ -42,7 +36,7 @@ class Hub:
     async def send(self, client: Client, message: dict[str, Any]) -> None:
         try:
             await asyncio.wait_for(client.ws.send_json(message), SEND_TIMEOUT)
-        except Exception:  # disconnects surface as several exception types
+        except Exception:  # disconnects raise several exception types
             log.info("dropping client after failed send")
             self.remove(client)
 

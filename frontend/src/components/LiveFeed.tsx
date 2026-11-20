@@ -1,11 +1,9 @@
-// NOTE: to be reconciled with the provided LiveFeed.tsx starter once received.
 import { editKey } from '../types'
 import type { Edit, Flag } from '../types'
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 
-// Two lines per edit: the title gets the full width on the first line, with
-// the details underneath, so titles stay readable in a narrow panel.
+// Two lines per edit so titles stay readable in a narrow panel.
 export function LiveFeed({ edits, flags }: { edits: Edit[]; flags: Map<string, Flag> }) {
   if (edits.length === 0) return <p className="muted">Listening for edits…</p>
   return (

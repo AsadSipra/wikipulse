@@ -4,7 +4,7 @@
 import { editKey } from './types'
 import type { ConnectionStatus, Edit, Flag, ServerMessage, Stats } from './types'
 
-export const FEED_LIMIT = 200 // bounded so a long-running tab never grows unbounded
+export const FEED_LIMIT = 200
 export const FLAG_LIMIT = 50
 
 export interface State {
@@ -12,7 +12,7 @@ export interface State {
   wiki: string | null
   stats: Stats | null
   feed: Edit[] // newest first
-  flags: Flag[] // newest first; kept separately because flags arrive after their edit
+  flags: Flag[] // newest first; flags arrive after their edit
 }
 
 export type Action =
@@ -28,14 +28,12 @@ export function reducer(state: State, action: Action): State {
       return { ...state, status: action.status }
 
     case 'select-wiki':
-      // Clear everything for the old selection right away, stats included, so
-      // the new wiki never shows the previous one's numbers. The server answers
-      // with a fresh `init`.
+      // Clear at once so the new wiki never shows the old numbers.
       return { ...state, wiki: action.wiki, stats: null, feed: [], flags: [] }
 
     case 'message': {
       const { message } = action
-      // Ignore late messages for a wiki we've already switched away from.
+      // Ignore late messages for the previous wiki.
       if (message.stats.wiki !== state.wiki) return state
       switch (message.type) {
         case 'init':

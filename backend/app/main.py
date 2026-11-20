@@ -25,6 +25,8 @@ from .vandalism import VandalismService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("wikipulse")
+# /health reports "stalled" after this much silence (the source reconnects at 60s).
+STALL_SECONDS = 120
 
 
 def build_source(cfg: Settings) -> EventSource:
@@ -47,8 +49,7 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
     llm = build_llm(cfg) if llm == "auto" else llm
     vandalism_llm = Budgeted(llm, cfg.vandalism_calls_per_minute, "vandalism") if llm else None
     pulse_llm = Budgeted(llm, cfg.pulse_calls_per_minute, "pulse") if llm else None
-    # AI spend follows viewers, not uptime: with no dashboard connected, Pulse
-    # and vandalism review pause. Ingestion and stats keep running (they're free).
+    # AI work pauses while no dashboard is connected.
     vandalism = VandalismService(vandalism_llm, fetch_diffs=cfg.fetch_diffs, has_viewers=lambda: bool(hub.clients))
     pipeline = Pipeline(
         source or build_source(cfg), stats, hub, vandalism=vandalism, wikipedia_only=cfg.wikipedia_only
@@ -62,8 +63,7 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
         try:
             yield
         finally:
-            # Clean up even if the pipeline already failed: awaiting a failed
-            # task re-raises, and that must not skip closing the HTTP clients.
+            # Close clients even if awaiting the failed task re-raises.
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
@@ -75,22 +75,22 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
     app.state.pipeline = pipeline
     app.add_middleware(CORSMiddleware, allow_origins=list(cfg.cors_origins), allow_methods=["GET"])
 
-    # Both routes are async so they run on the event loop that owns the stats.
-    # A plain `def` route runs in a worker thread while ingestion mutates them.
+    # Async routes: a plain `def` would read the stats from another thread.
     @app.get("/health")
     async def health() -> JSONResponse:
         failed = pipeline.failure is not None
+        silent_for = time.time() - pipeline.last_event_at if pipeline.last_event_at else None
+        stalled = getattr(pipeline.source, "kind", None) == "live" and silent_for is not None and silent_for > STALL_SECONDS
         body = {
-            "status": "down" if failed else "ok",
+            "status": "down" if failed else "stalled" if stalled else "ok",
             "error": _failure_summary(pipeline.failure) if failed else None,
-            "seconds_since_last_event": (
-                round(time.time() - pipeline.last_event_at) if pipeline.last_event_at else None
-            ),
+            "seconds_since_last_event": round(silent_for) if silent_for is not None else None,
             "source": type(pipeline.source).__name__,
             "connected": getattr(pipeline.source, "connected", True),
             "events_seen": stats.total_seen,
             "events_skipped": pipeline.parse_skipped,
             "events_filtered_non_wikipedia": pipeline.filtered_out,
+            "events_duplicate": pipeline.duplicates,
             "clients": len(hub.clients),
             "uptime_seconds": round(time.time() - pipeline.started_at),
             "ai": {
@@ -108,8 +108,7 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
                 "pulse_source": pipeline.pulse.latest.source if pipeline.pulse and pipeline.pulse.latest else None,
             },
         }
-        # 503 lets Docker's healthcheck (and a reviewer) see that ingestion stopped.
-        return JSONResponse(body, status_code=503 if failed else 200)
+        return JSONResponse(body, status_code=503 if failed or stalled else 200)
 
     @app.get("/api/snapshot")
     async def snapshot(wiki: str | None = None) -> dict[str, Any]:
@@ -124,7 +123,7 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
             while True:
                 wiki = parse_subscription(await ws.receive_json())
                 if wiki is _INVALID:
-                    continue  # ignore malformed messages rather than drop the client
+                    continue  # ignore malformed messages
                 client.wiki = wiki
                 await hub.send(client, pipeline.initial_message(client.wiki))
         except (WebSocketDisconnect, ValueError):

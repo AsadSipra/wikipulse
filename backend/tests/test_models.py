@@ -1,11 +1,13 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from app.models import is_anonymous, is_wikipedia, parse_event
 
-SAMPLE = Path(__file__).parent.parent / "data" / "sample_events.jsonl"
+PROVIDED = Path(__file__).parent.parent / "data" / "sample_events.jsonl"  # from Geeks Ltd
+SYNTHETIC = Path(__file__).parent / "data" / "synthetic_events.jsonl"  # my own
 
 
 def make_raw(**overrides):
@@ -53,7 +55,7 @@ def test_canary_events_are_dropped():
     assert parse_event(make_raw(meta={"domain": "canary"})) is None
 
 
-@pytest.mark.parametrize("missing", ["id", "wiki", "title", "timestamp", "server_name"])
+@pytest.mark.parametrize("missing", ["id", "wiki", "title", "server_name"])
 def test_missing_required_fields_return_none_instead_of_raising(missing):
     raw = make_raw()
     del raw[missing]
@@ -68,10 +70,11 @@ def test_anonymous_detection(user, expected):
     assert is_anonymous(user) is expected
 
 
-def test_whole_sample_file_parses_without_errors():
+@pytest.mark.parametrize("sample", [PROVIDED, SYNTHETIC], ids=["provided", "synthetic"])
+def test_whole_sample_file_parses_without_errors(sample):
     """Every line either parses or is cleanly skipped; nothing raises."""
     parsed = skipped = 0
-    for line in SAMPLE.read_text().splitlines():
+    for line in sample.read_text().splitlines():
         try:
             raw = json.loads(line)
         except json.JSONDecodeError:
@@ -147,3 +150,19 @@ def test_missing_lengths_mean_unknown_delta_not_zero():
 )
 def test_page_urls_escape_titles(title, expected):
     assert parse_event(make_raw(title=title)).page_url == expected
+
+
+@pytest.mark.parametrize("value", [1794996015000, 1794996015000.0])
+def test_millisecond_timestamps_are_read_as_seconds(value):
+    assert parse_event(make_raw(timestamp=value)).timestamp == 1794996015
+
+
+def test_missing_timestamp_keeps_the_edit_and_uses_ingest_time():
+    before = int(time.time())
+    edit = parse_event(make_raw(timestamp=None))
+    assert edit is not None and edit.timestamp >= before
+
+
+@pytest.mark.parametrize("value", ["1794996015", True, [1]])
+def test_non_numeric_timestamp_is_malformed(value):
+    assert parse_event(make_raw(timestamp=value)) is None
