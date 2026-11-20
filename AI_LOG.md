@@ -84,15 +84,14 @@ I used Claude as a pair programmer: scaffolding, first drafts, debugging, and re
 ## What I did not use AI for
 
 - **Product decisions:**
-  - **Starting before the starter files arrived.** Only the brief came at first. Rather than wait, I built against the live stream and planned to merge the files later. When `sample_events.jsonl` arrived, it went in as the default replay with its traps handled.
   - **Asking few questions up front.** I kept the clarifying questions to the few that could block the work (missing files, an API key, how to share the result), and made reasonable assumptions for the rest, recorded in the README.
   - **A Start/Stop demo instead of automatic pausing.** A reviewer should always see clearly whether the demo is running.
-  - **Accepting the left-running-demo risk.** It's documented, with a per-demo time limit as the next step, rather than adding more machinery to a demo.
   - **Switching from a local model to a hosted one** once the local model's quality wasn't good enough for vandalism verdicts.
   - **Capping cost on every AI call.** I asked for a max-tokens setting, so each reply is short and its cost is bounded.
-  - **Hosting on AWS with credits I already had,** so the demo runs at no extra cost.
   - **Showing the product with a GIF of the live site** rather than a screenshot, because a live dashboard is best judged in motion.
-- **Choosing which review findings to act on.** I decided which feedback was worth the time and which to leave.
+  - **Choosing which review findings to act on.** I decided which feedback was worth the time and which to leave.
+  - **Choosing vandalism score rules.** I decided which fields will have what score and score benchmark for possible vandalism.
+  - **Checking the stream connection and dropout.**
 - **Hands-on testing:**
   - running the app locally and on the live stream
   - reading the dashboard and judging when the output looked wrong (example 3 came from looking at the live dashboard, not from tests)
