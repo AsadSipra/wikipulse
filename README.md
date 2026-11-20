@@ -45,7 +45,7 @@ A live dashboard for Wikipedia edits: edits per minute, the 10 most-edited artic
 | Edits per minute, top 10 pages (5 min), live feed, wiki filter | ✅ | `stats.py`, `pipeline.py`, `frontend/src` |
 | AI trend summary ("Pulse") | ✅ | `pulse.py` |
 | AI vandalism flags | ✅ | `vandalism.py` |
-| Tests for the parts that matter most | ✅ | 163 backend, 11 frontend, 1 end-to-end |
+| Tests for the parts that matter most | ✅ | 164 backend, 11 frontend, 1 end-to-end |
 | README and AI log | ✅ | this file, [`AI_LOG.md`](AI_LOG.md) |
 | Optional: Docker setup | ✅ | `docker-compose.yml` |
 | Optional: end-to-end UI test | ✅ | Playwright (see [Tests](#tests) for why) |
@@ -159,7 +159,7 @@ All settings come from `.env` (see [`.env.example`](.env.example)). The key ones
 | `WIKIPEDIA_ONLY` | `true` | Drop Wikidata, Commons and other sister projects |
 | `AI_ENABLED` | `true` | Turn the AI features on or off |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | local Ollama, `llama3.2` | Any OpenAI-compatible endpoint, e.g. `https://api.anthropic.com/v1` with `claude-haiku-5-5` |
-| `LLM_MAX_TOKENS` | `300` | Reply cap (replies are short JSON) |
+| `LLM_MAX_TOKENS` | `800` | Reply cap. Replies are short JSON, but some models spend part of the budget reasoning first. |
 | `VANDALISM_CALLS_PER_MINUTE`, `PULSE_CALLS_PER_MINUTE` | `16`, `4` | AI call limit per feature |
 | `PULSE_INTERVAL_SECONDS` | `60` | How often Pulse refreshes |
 | `FETCH_DIFFS` | `true` | `false` gives rule-only vandalism flags (no AI review) |
@@ -170,7 +170,7 @@ With Ollama in Docker, set `DOCKER_LLM_BASE_URL=http://host.docker.internal:1143
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest -q                       # 163 tests
+cd backend && .venv/bin/python -m pytest -q                       # 164 tests
 cd frontend && npm test                                            # 11 tests
 cd frontend && npx playwright install chromium && npm run test:e2e # 1 browser test
 ```

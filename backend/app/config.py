@@ -26,7 +26,7 @@ class Settings:
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "llama3.2")
     llm_timeout: float = float(os.getenv("LLM_TIMEOUT", "30"))
-    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "300"))
+    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "800"))
     # Calls per minute, per feature.
     vandalism_calls_per_minute: int = int(os.getenv("VANDALISM_CALLS_PER_MINUTE", "16"))
     pulse_calls_per_minute: int = int(os.getenv("PULSE_CALLS_PER_MINUTE", "4"))

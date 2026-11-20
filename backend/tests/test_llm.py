@@ -60,7 +60,7 @@ async def test_sends_openai_style_request_and_parses_reply():
     assert seen["auth"] == "Bearer secret"
     assert seen["body"]["model"] == "test-model"
     assert seen["body"]["response_format"] == {"type": "json_object"}
-    assert seen["body"]["max_tokens"] == 300  # Anthropic's compatible endpoint expects it
+    assert seen["body"]["max_tokens"] == 800  # Anthropic's compatible endpoint expects it
 
 
 async def test_http_errors_keep_the_provider_message():
@@ -170,3 +170,15 @@ def test_empty_reply_error_names_the_finish_reason():
     resp = httpx.Response(200, json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})
     with pytest.raises(LLMError, match="finish_reason=length"):
         _reply_text(resp)
+
+
+async def test_unparseable_reply_error_says_whether_it_was_cut_off():
+    def handler(request):
+        body = {"choices": [{"message": {"content": '{"headline": "Busy", "summary": "Lots of'}, "finish_reason": "length"}]}
+        return httpx.Response(200, json=body)
+
+    llm = OpenAICompatibleLLM("http://llm", "m", transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError):
+        await llm.complete_json("s", "u")
+    assert "finish_reason=length" in llm.last_error
+    await llm.aclose()

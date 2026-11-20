@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -56,7 +57,7 @@ class OpenAICompatibleLLM:
         model: str,
         api_key: str = "",
         timeout: float = 30.0,
-        max_tokens: int = 300,
+        max_tokens: int = 800,
         max_concurrency: int = 2,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -85,7 +86,14 @@ class OpenAICompatibleLLM:
                 if resp.is_error:
                     # The provider's message (redacted) says far more than the status.
                     raise LLMError(f"HTTP {resp.status_code}: {_provider_message(resp)}")
-                return extract_json(_reply_text(resp))
+                text = _reply_text(resp)
+                try:
+                    return extract_json(text)
+                except ValueError as exc:
+                    # "length" means the reply hit LLM_MAX_TOKENS and was cut off.
+                    raise LLMError(
+                        f"bad reply: {exc} (finish_reason={_finish_reason(resp)}, {len(text)} chars)"
+                    ) from None
             except LLMError as exc:
                 self._fail(str(exc))
                 raise
@@ -142,6 +150,12 @@ class Budgeted:
             self.rate_limited += 1
             raise LLMError(f"{self.name} budget used up for this minute")
         return await self.inner.complete_json(system, user)
+
+
+def _finish_reason(resp: httpx.Response) -> Any:
+    with contextlib.suppress(Exception):
+        return resp.json()["choices"][0].get("finish_reason")
+    return None
 
 
 def _reply_text(resp: httpx.Response) -> str:
