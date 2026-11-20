@@ -91,7 +91,7 @@ I used Claude as a pair programmer: scaffolding, first drafts, debugging, and re
   - **Showing the product with a GIF of the live site** rather than a screenshot, because a live dashboard is best judged in motion.
   - **Choosing which review findings to act on.** I decided which feedback was worth the time and which to leave.
   - **Choosing vandalism score rules.** I decided which fields will have what score and score benchmark for possible vandalism.
-  - **Checking the stream connection and dropout.**
+  - **Checking the stream connection and dropout.** I noticed the live demo had stopped updating. That uncovered a silent stall: the connection to Wikipedia stayed open for 48 hours while no data arrived. It led to the idle watchdog and to `/health` reporting stalls.
 - **Hands-on testing:**
   - running the app locally and on the live stream
   - reading the dashboard and judging when the output looked wrong (example 3 came from looking at the live dashboard, not from tests)

@@ -68,7 +68,7 @@ Of the starter files, only `sample_events.jsonl` was provided. It is the default
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     WM[Wikimedia<br/>EventStreams] -->|SSE| LS[LiveSource]
     RF[(sample_events.jsonl)] --> RS[ReplaySource]
     LS --> P[Parse, validate,<br/>de-duplicate]
