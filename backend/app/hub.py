@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import WebSocket
@@ -18,7 +19,6 @@ SEND_TIMEOUT = 2.0
 class Client:
     ws: WebSocket
     wiki: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class Hub:
@@ -39,6 +39,9 @@ class Hub:
         except Exception:  # disconnects raise several exception types
             log.info("dropping client after failed send")
             self.remove(client)
+            # Close it too, so the browser reconnects instead of sitting on a silent socket.
+            with contextlib.suppress(Exception):
+                await client.ws.close()
 
     async def broadcast(self, build: Any) -> None:
         """Send a per-client message. `build(client)` returns a message or None."""

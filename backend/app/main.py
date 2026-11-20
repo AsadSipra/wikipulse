@@ -80,7 +80,9 @@ def create_app(cfg: Settings = settings, source: EventSource | None = None, llm:
     async def health() -> JSONResponse:
         failed = pipeline.failure is not None
         silent_for = time.time() - pipeline.last_event_at if pipeline.last_event_at else None
-        stalled = getattr(pipeline.source, "kind", None) == "live" and silent_for is not None and silent_for > STALL_SECONDS
+        # Counts from startup too, so a stream that never delivers anything is reported.
+        quiet_for = time.time() - (pipeline.last_event_at or pipeline.started_at)
+        stalled = getattr(pipeline.source, "kind", None) == "live" and quiet_for > STALL_SECONDS
         body = {
             "status": "down" if failed else "stalled" if stalled else "ok",
             "error": _failure_summary(pipeline.failure) if failed else None,

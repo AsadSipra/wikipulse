@@ -45,7 +45,7 @@ A live dashboard for Wikipedia edits: edits per minute, the 10 most-edited artic
 | Edits per minute, top 10 pages (5 min), live feed, wiki filter | ✅ | `stats.py`, `pipeline.py`, `frontend/src` |
 | AI trend summary ("Pulse") | ✅ | `pulse.py` |
 | AI vandalism flags | ✅ | `vandalism.py` |
-| Tests for the parts that matter most | ✅ | 161 backend, 11 frontend, 1 end-to-end |
+| Tests for the parts that matter most | ✅ | 163 backend, 11 frontend, 1 end-to-end |
 | README and AI log | ✅ | this file, [`AI_LOG.md`](AI_LOG.md) |
 | Optional: Docker setup | ✅ | `docker-compose.yml` |
 | Optional: end-to-end UI test | ✅ | Playwright (see [Tests](#tests) for why) |
@@ -170,7 +170,7 @@ With Ollama in Docker, set `DOCKER_LLM_BASE_URL=http://host.docker.internal:1143
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest -q                       # 161 tests
+cd backend && .venv/bin/python -m pytest -q                       # 163 tests
 cd frontend && npm test                                            # 11 tests
 cd frontend && npx playwright install chromium && npm run test:e2e # 1 browser test
 ```
@@ -299,4 +299,33 @@ To redeploy, copy the repo to the server with `git archive`, then run `docker co
 
 ## AI usage
 
-I used Claude as a pair programmer. [`AI_LOG.md`](AI_LOG.md) has five examples of what I asked, kept, changed and rejected, three times the AI was wrong, and what I chose not to use AI for.
+In my day-to-day work I use Claude Code inside a workspace I've set up for it: a rulebook of conventions, an indexed knowledge base, and a log of finished work. Every ticket goes through the same loop. Agents do the research, planning, implementation and review, and I make every decision and approve every step:
+
+```mermaid
+flowchart TD
+    T([Ticket]) --> R{Risk?}
+    R -->|routine| L[Lighter pass]
+    R -->|money, auth, data| F[Full process]
+    L --> I
+    F --> I
+    I[Step 1: Investigate<br/>research agent reports facts,<br/>open questions and risks] --> D
+    D[Step 2: Decide and plan<br/>I answer business questions,<br/>planning agent proposes the smallest design] --> A{I approve<br/>the plan?}
+    A -->|no| D
+    A -->|yes| M[Step 3: Implement<br/>small tasks, one agent each,<br/>following the conventions]
+    M --> X[Step 4: Test<br/>agent writes a checklist<br/>from the real code, I run it]
+    X --> H[Step 5: Review<br/>my review, then a skeptical review<br/>by a different, stronger model]
+    H --> V{I verify?}
+    V -->|issues| M
+    V -->|ok| P([Pull request])
+    P --> K[Step 6: Learn<br/>lessons go into the knowledge base<br/>and the work log]
+    K -.->|every few tickets| RT[Retrospective agent<br/>suggests process changes,<br/>I decide which to adopt]
+    RT -.-> T
+```
+
+For this take-home I used a lighter version of the same loop:
+- I asked before assuming, and decided the open questions myself.
+- Claude wrote changes straight into my project, where I reviewed them as they happened.
+- I ran every test and command myself.
+- An independent review pass checked the code.
+
+[`AI_LOG.md`](AI_LOG.md) has the details: five examples of what I asked, kept, changed and rejected (three of them times the AI was wrong), and what I chose not to use AI for.

@@ -63,11 +63,29 @@ def test_websocket_init_then_ticks_and_wiki_subscription():
         assert all(e["wiki"] == "dewiki" for e in filtered["edits"])
 
 
+class AfterFirstViewer:
+    """Replays only once a browser is connected: AI review is skipped while nobody watches."""
+
+    kind = "replay"
+    connected = True
+
+    def __init__(self, inner):
+        self.inner, self.hub = inner, None
+
+    async def events(self):
+        while not self.hub.clients:
+            await asyncio.sleep(0.01)
+        async for event in self.inner.events():
+            yield event
+
+
 def test_flags_and_pulse_reach_the_browser():
     # Diffs are off, so only Pulse calls the LLM (review is tested in test_vandalism.py).
     llm = FakeLLM({"headline": "Busy afternoon", "summary": "Lots happening."})
-    app, client = make_client(llm, sample=SYNTHETIC)
-    with client, client.websocket_connect("/ws") as ws:
+    source = AfterFirstViewer(ReplaySource(SYNTHETIC, speed=0, loop=False))
+    app = create_app(Settings(source="replay", fetch_diffs=False, pulse_interval_seconds=0.05), source=source, llm=llm)
+    source.hub = app.state.pipeline.hub
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
         flags, pulse = [], None
         for _ in range(40):
             msg = ws.receive_json()
@@ -199,5 +217,25 @@ def test_health_reports_a_silent_live_stream_as_stalled(monkeypatch):
             time.sleep(0.02)
         assert client.get("/health").status_code == 200
         monkeypatch.setattr("app.main.STALL_SECONDS", -1)  # treat any silence as a stall
+        resp = client.get("/health")
+    assert resp.status_code == 503 and resp.json()["status"] == "stalled"
+
+
+class NeverConnects:
+    """A live source that never delivers a single event."""
+
+    kind = "live"
+    connected = False
+
+    async def events(self):
+        await asyncio.sleep(3600)
+        yield {}
+
+
+def test_health_reports_a_live_stream_that_never_delivered_as_stalled(monkeypatch):
+    app = create_app(Settings(fetch_diffs=False), source=NeverConnects(), llm=None)
+    with TestClient(app) as client:
+        assert client.get("/health").json()["status"] == "ok"  # just started
+        monkeypatch.setattr("app.main.STALL_SECONDS", -1)
         resp = client.get("/health")
     assert resp.status_code == 503 and resp.json()["status"] == "stalled"
